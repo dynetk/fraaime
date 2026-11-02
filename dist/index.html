@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fraaime · Open concept editor</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="./">fraaime<span>®</span></a><span class="header-divider"></span><span class="studio-label">Open concept editor</span><a class="top-actions button outline" href="https://github.com/dynetk/fraaime">View source ↗</a></header>
+  <main>
+    <section class="project-heading"><div><div class="eyebrow">PUBLIC DEVELOPMENT WORKSPACE</div><h1>Start with an idea.</h1><p>A blank framing canvas. Add components and shape a concept using your mouse.</p></div></section>
+    <div class="project-stats"><div><span>LEVELS</span><strong id="model-level-count">01</strong><p id="model-level-note">Empty ground-floor workspace</p></div><div><span>UNITS</span><strong>Feet</strong><p>Spacing in inches · rotation in degrees</p></div><div><span>PROJECT DATA</span><strong>None</strong><p>No customer plans or building models</p></div><div><span>STATUS</span><strong>Concept</strong><p>No engineering or estimating approval</p></div></div>
+    <section class="model-workspace" aria-label="Concept workspace">
+      <div class="model-card">
+        <div id="model"><div class="model-loading">Loading editor…</div></div>
+        <div class="viewer-toolbar"><div class="segmented" aria-label="Model representation"><button data-look="frame" class="selected" aria-pressed="true">Framing</button><button data-look="architecture" aria-pressed="false">Solid</button></div><button id="model-help" class="icon-button" aria-label="Model help">?</button></div>
+        <div class="viewer-controls"><button id="whole-view" class="button outline">All floors</button><div class="camera-buttons"><button id="zoom-in" class="icon-button" aria-label="Zoom in">+</button><button id="zoom-out" class="icon-button" aria-label="Zoom out">−</button><button id="top-view" class="button outline">Top view</button><button id="reset-view" class="button outline">Reset view</button></div></div>
+        <div class="viewer-caption"><span>ILLUSTRATIVE COMPONENTS ONLY</span><span>Saved in this browser</span></div>
+      </div>
+      <aside class="review-card"><div class="eyebrow light">BUILD A CONCEPT</div><h2>Your blank workspace.</h2><p class="review-intro">Choose Edit model to add framing components, change dimensions, or explore another floor.</p><p>Export your design to share it. This public template contains no customer drawings or source building data.</p></aside>
+    </section>
+    <p class="source-note">This editor uses generic component defaults and a 20 × 20 ft template for new floors. It does not read PDFs, calculate takeoffs, issue estimates or produce engineered framing.</p>
+  </main>
+  <dialog id="help"><div class="dialog-heading"><h2>Shape your concept.</h2><button id="close-help" class="icon-button" aria-label="Close help">×</button></div><p>Drag a library tile onto the model. Drag the component to move it. Resize uses L, H and D handles; Rotate changes its direction on the floor. Turn Snap off for continuous adjustments. Empty space or Orbit controls the camera. Export design saves a JSON file; import accepts files from this public editor only.</p></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

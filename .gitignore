@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.openai/
+node_modules/
+tmp/
+private/
+*.pdf
+*.png
+*.jpg
+*.zip
+*.tar.gz
+*.log
+*design*.json
