@@ -1,6 +1,10 @@
-# Fraaime — public concept editor
+# Fraaime — PDF-to-model pilot and concept editor
 
-Reusable framing editor source for Fraaime: **https://github.com/dynetk/fraaime**.
+Reusable application and framing editor source for Fraaime: **https://github.com/dynetk/fraaime**.
+
+The new **[PDF-to-model pilot application](app/README.md)** lives in `app/`. It includes private uploads, background PDF preparation, an OpenAI extraction adapter, project permissions, and a data-driven 3D editor with server-saved revisions. Its README covers local development and Clerk, Neon, Blob, OpenAI, and Vercel setup. The static editor below remains available independently.
+
+For the hosted pilot, follow the **[Vercel launch checklist](app/SETUP.md)**. Use `app` as the web project's root directory and `app/worker` for the separate PDF service. The repository root is not the Next.js application.
 
 This public repository contains a working **blank, project-neutral editor**. Customer plan images, PDFs, addresses, building models, opening schedules and project-specific application snapshots are excluded. The separate project demos remain outside this repository.
 
@@ -50,7 +54,7 @@ node --test tests/*.test.mjs
 
 ## Scope and privacy
 
-This is a concept editor, not engineering, fabrication, CAD/BIM, PDF analysis or estimating software. It has no AI/OCR API, server storage, authentication, pricing or commercial workflow. Members use simplified shapes.
+The static `dist/` application is a concept editor, not engineering, fabrication, CAD/BIM, PDF analysis or estimating software. It has no AI/OCR API, server storage, authentication, pricing or commercial workflow. Members use simplified shapes. The separate `app/` pilot adds the services described in its own README.
 
 The public schema is `fraaime-public-concept`, version 1, with feet for geometry, inches for spacing and degrees for rotation. It intentionally does not accept project-demo exports. The ground-floor datum stays at zero. Undo history is session-only. Storage uses `fraaime-public-editor-v1`, separate from project demos.
 

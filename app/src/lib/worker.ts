@@ -1,0 +1,85 @@
+import { required, limit } from "./config";
+export interface Sheet {
+  page: number;
+  width: number;
+  height: number;
+  rotation: number;
+  text: string;
+  kind: string;
+  sheet: string;
+  revision: string;
+  scanned: boolean;
+}
+export interface Manifest {
+  sha256: string;
+  pageCount: number;
+  sheets: Sheet[];
+  warnings: string[];
+}
+export interface PageEvidence {
+  page: number;
+  width: number;
+  height: number;
+  rotation: number;
+  text: string;
+  lines: number[][];
+  images: { region: number[]; base64: string }[];
+}
+export async function worker<T>(
+  endpoint: string,
+  planId: string,
+  page?: number,
+): Promise<T> {
+  const url = new URL(endpoint, required("PDF_WORKER_URL"));
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${required("PDF_WORKER_TOKEN")}`,
+    },
+    body: JSON.stringify({
+      source_url: `${required("APP_ORIGIN")}/api/worker-source/${planId}`,
+      page,
+      max_pages: limit("MAX_PDF_PAGES", 150),
+      max_bytes: limit("MAX_UPLOAD_MB", 120) * 1024 * 1024,
+    }),
+    signal: AbortSignal.timeout(240000),
+  });
+  if (!response.ok) {
+    const body = await response
+      .json()
+      .catch(() => ({ detail: "PDF service failed" }));
+    throw new Error(String(body.detail || "PDF service failed"));
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function pageEvidence(
+  planId: string,
+  page: number,
+): Promise<PageEvidence> {
+  const { database } = await import("./db");
+  const { readArtifact, writeArtifact } = await import("./storage");
+  const db = await database();
+  const old = await db.query<{ data: { storageKey: string } }>(
+    "SELECT data FROM page_artifacts WHERE plan_id=$1 AND page=$2",
+    [planId, page],
+  );
+  if (old.rows[0]) return readArtifact(old.rows[0].data.storageKey);
+  const data = await worker<PageEvidence>("/page", planId, page),
+    key = `artifacts/${planId}/page-${page}.json`;
+  // Recheck deletion before writing an artifact after an expensive render.
+  await db.transaction(async (tx) => {
+    const p = await tx.query(
+      "SELECT p.id FROM projects p JOIN plans pl ON pl.project_id=p.id WHERE pl.id=$1 AND p.deleted_at IS NULL FOR UPDATE OF p",
+      [planId],
+    );
+    if (!p.rows.length) throw new Error("Project deleted");
+    await writeArtifact(key, data);
+    await tx.query(
+      "INSERT INTO page_artifacts(plan_id,page,data) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+      [planId, page, JSON.stringify({ storageKey: key })],
+    );
+  });
+  return data;
+}

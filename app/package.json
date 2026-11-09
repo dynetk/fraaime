@@ -1,0 +1,49 @@
+{
+  "name": "fraaime-pilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --webpack --hostname 127.0.0.1 --port 5190",
+    "build": "next build --webpack",
+    "start": "next start --hostname 127.0.0.1 --port 5190",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/migrate.ts",
+    "import:legacy": "node --env-file-if-exists=.env.local --import tsx scripts/import-legacy.ts",
+    "check:setup": "node --env-file-if-exists=.env.local --import tsx scripts/check-setup.ts",
+    "benchmark": "node --import tsx scripts/benchmark.ts",
+    "worker": "worker/.venv/bin/python scripts/worker-dev.py"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "latest",
+    "@electric-sql/pglite": "latest",
+    "@vercel/blob": "latest",
+    "next": "16.4.5",
+    "openai": "latest",
+    "pg": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "three": "latest",
+    "workflow": "latest",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/pg": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/three": "latest",
+    "prettier": "^3.9.10",
+    "tsx": "latest",
+    "typescript": "latest"
+  },
+  "overrides": {
+    "zod": "4.6.7",
+    "undici": "^7.30.1",
+    "minimatch": "^11.0.1"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.vercel/
+.env*
+!.env.example
+.local/
+private/
+*.tsbuildinfo
+__pycache__/
+.venv/
+.pytest_cache/
+/.swc

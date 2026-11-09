@@ -1,0 +1,17 @@
+.git
+.local
+.env*
+.vercel
+private
+node_modules
+.next
+worker/.venv
+**/__pycache__
+**/.pytest_cache
+*.tsbuildinfo
+**/*.pdf
+**/*.png
+**/*.jpg
+**/*.zip
+**/*.log
+**/*design*.json
