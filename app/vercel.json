@@ -1,7 +1,20 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run build && node scripts/prepare-workflow-deployment.mjs",
   "installCommand": "npm ci",
-  "regions": ["sfo1"]
+  "regions": ["sfo1"],
+  "functions": {
+    "src/app/.well-known/workflow/v1/flow/route.js": {
+      "maxDuration": 800,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "__wkf_workflow_*",
+          "retryAfterSeconds": 5,
+          "initialDelaySeconds": 0
+        }
+      ]
+    }
+  }
 }

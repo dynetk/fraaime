@@ -20,6 +20,8 @@ With the correct identity, open GitHub Settings → Applications → Installed G
 
 Do not select the FastAPI preset for the worker: the Dockerfile installs Poppler. Confirm Container Runtime availability in the target account. Keep the same worker portable if another container host is needed.
 
+These root directories apply to full-repository Git deployments. For an API/file deployment containing only the contents of `app`, clear the web project's Root Directory and upload those contents at the deployment root. Do not prefix them with `app/` again. The current web release uses this isolated file bundle; the worker uses its `app/worker` root. Before switching to Git-based deployment, restore the web root to `app`. The post-build check refuses a release missing the dashboard, API, or Workflow route.
+
 ## 2. Configure storage and identity
 
 - **Neon:** Vercel project → Storage → Create Database → Neon. Choose a region near the app, connect it to the web project, and verify that `DATABASE_URL` contains the pooled PostgreSQL connection string. Review the provider plan before activating it. Use a separate database/branch for previews; do not connect arbitrary preview builds to production customer data.
@@ -87,3 +89,7 @@ The reviewed pilot release enables `FRAAIME_SHELL_FUSION=1` for new 2–8-sheet 
 
 
 The reviewed pilot also enables `FRAAIME_SHELL_DETAILS=1` for the interior-wall/roof pass. It adds a second Sol call and an independent budget checkpoint, preserves the base shell on failure, and stores roof holes and approximation notes in editable models. Configure Fluid Compute with an 800-second function default; the generated Workflow handler requests the host maximum, allowing the ten-minute detail API timeout plus persistence overhead. The web route only enqueues jobs. Confirm the built Workflow function's duration before release. See EVALUATION.md for comparison and timeout-cost handling. Set both flags to `0` and redeploy to disable this path for new jobs; existing checkpoints retain their processing mode.
+
+### Workflow deployment compatibility
+
+Set `NEXT_ENABLE_ADAPTER=0` in Vercel Production for this release so the standard Next.js builder consumes function metadata. Hosted builds could not resolve the SDK-generated route source, dropping the queue consumer and causing `WORKFLOW_CONSUMER_NOT_REGISTERED`. The Vercel build command runs `scripts/prepare-workflow-deployment.mjs` after Next compiles. It validates the compiled handler and writes the installed SDK's queue trigger and an 800-second duration into Next's function manifest. It fails closed if the handler or expected manifest format is missing. The Build Output API requires the SDK's `consumer` field; the public `vercel.json` queue v2 schema omits that field. Recheck consumer registration and a complete hosted job before removing this compatibility step or upgrading Next.js/Workflow.
