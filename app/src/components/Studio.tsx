@@ -14,6 +14,7 @@ import {
 import { addElement, removeElement, transformElement } from "@/lib/editing";
 import { editWallMember, resetWallFraming } from "@/lib/framing";
 import type { Manifest } from "@/lib/worker";
+import { selectedPlanPages } from "@/lib/sheet-selection";
 const Viewer = dynamic(() => import("./ModelViewer"), {
   ssr: false,
   loading: () => <div className="canvas loading">Opening model…</div>,
@@ -100,6 +101,17 @@ export default function Studio() {
       page: number;
       region?: number[] | null;
     } | null>(null);
+  const selections = Object.fromEntries(
+    (detail?.plans ?? []).map((plan) => [
+      plan.id,
+      selectedPlanPages(
+        plan.manifest,
+        pageSelections[plan.id],
+        detail?.jobs.find((job) => job.plan_id === plan.id && job.pages.length)
+          ?.pages,
+      ),
+    ]),
+  );
   const loadProjects = async () => setProjects(await api("projects"));
   const refresh = useCallback(async () => {
     if (projectId) setDetail(await api("projects/" + projectId));
@@ -1135,8 +1147,7 @@ export default function Studio() {
                                   )
                                     run(async () => {
                                       await api(`jobs/${j.id}/new`, "POST", {
-                                        pages:
-                                          pageSelections[plan.id] ?? j.pages,
+                                        pages: selections[plan.id] ?? j.pages,
                                       });
                                       await refresh();
                                     });
@@ -1166,7 +1177,7 @@ export default function Studio() {
                                 onClick={() =>
                                   run(async () => {
                                     await api(`jobs/${j.id}/run`, "POST", {
-                                      pages: pageSelections[plan.id] ?? j.pages,
+                                      pages: selections[plan.id] ?? j.pages,
                                     });
                                     await refresh();
                                   })
@@ -1200,10 +1211,32 @@ export default function Studio() {
                       {plan.manifest && (
                         <>
                           <p className="fineprint">
-                            {plan.manifest.pageCount} sheets · Confirm sheet
-                            selection and scales during review. Maximum 30 pages
-                            per extraction run.
+                            {plan.manifest.pageCount} sheets ·{" "}
+                            {selections[plan.id]?.length ?? 0} selected.{" "}
+                            Detected floor plans are selected automatically for
+                            new uploads. Adjust the selection and add supporting
+                            sections, elevations, and roof plans as needed.{" "}
+                            Confirm sheet selection and scales during review.{" "}
+                            {session?.shellFusion
+                              ? "Select 2–8 sheets per shell extraction."
+                              : "Maximum 30 pages per extraction run."}
                           </p>
+                          {session?.shellFusion &&
+                            (selections[plan.id]?.length ?? 0) > 8 && (
+                              <p className="error-text">
+                                More than 8 sheets are selected. Reduce the
+                                selection to 8 or fewer before processing.
+                              </p>
+                            )}
+                          {!plan.manifest.sheets.some(
+                            (sheet) => sheet.kind === "floor-plan",
+                          ) && (
+                            <p className="fineprint">
+                              No floor plans were detected automatically. Select
+                              the relevant sheets below; scanned drawings may
+                              need manual selection.
+                            </p>
+                          )}
                           <div className="sheet-grid">
                             {plan.manifest.sheets.map((s) => (
                               <div className="sheet" key={s.page}>
@@ -1211,16 +1244,23 @@ export default function Studio() {
                                   <input
                                     type="checkbox"
                                     checked={(
-                                      pageSelections[plan.id] ?? []
+                                      selections[plan.id] ?? []
                                     ).includes(s.page)}
                                     onChange={(e) =>
                                       setPageSelections((prev) => ({
                                         ...prev,
                                         [plan.id]: e.target.checked
-                                          ? [...(prev[plan.id] ?? []), s.page]
-                                          : (prev[plan.id] ?? []).filter(
-                                              (n) => n !== s.page,
-                                            ),
+                                          ? [
+                                              ...(prev[plan.id] ??
+                                                selections[plan.id] ??
+                                                []),
+                                              s.page,
+                                            ]
+                                          : (
+                                              prev[plan.id] ??
+                                              selections[plan.id] ??
+                                              []
+                                            ).filter((n) => n !== s.page),
                                       }))
                                     }
                                   />
