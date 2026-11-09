@@ -14,7 +14,7 @@ export async function actor(): Promise<Actor> {
     (e) => e.id === user.primaryEmailAddressId,
   );
   if (!primary || primary.verification?.status !== "verified")
-    throw new HttpError(403, "A verified Google email is required.");
+    throw new HttpError(403, "A verified email address is required.");
   const email = primary.emailAddress.toLowerCase();
   if (adminEmails().includes(email)) return { email, role: "admin" };
   const { rows } = await (

@@ -69,7 +69,7 @@ const handler = route(async (r) => {
       );
     const b = z
       .object({
-        email: z.email(),
+        email: z.string().trim().email(),
         role: z.enum(["admin", "reviewer", "customer"]),
       })
       .parse(await json(r));

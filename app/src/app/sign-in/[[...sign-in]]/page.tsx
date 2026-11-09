@@ -15,7 +15,7 @@ export default function Page() {
       ) : process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
         <SignIn forceRedirectUrl="/" />
       ) : (
-        <p>Google sign-in has not been configured yet.</p>
+        <p>Sign-in has not been configured yet.</p>
       )}
     </main>
   );
