@@ -68,6 +68,7 @@ export default function Studio() {
     user: { email: string; role: string };
     aiConfigured: boolean;
     workerConfigured: boolean;
+    shellFusion: boolean;
   } | null>(null);
   const [projects, setProjects] = useState<Project[]>([]),
     [projectId, setProjectId] = useState(""),
@@ -716,6 +717,17 @@ export default function Studio() {
                             <b>{model.walls.length}</b> walls{" "}
                             <b>{model.openings.length}</b> openings
                           </div>
+                          {model.detailProvenance && (
+                            <p className="fineprint">
+                              {
+                                model.walls.filter((w) => w.role === "interior")
+                                  .length
+                              }{" "}
+                              interior partitions · {model.roofs.length} roof
+                              surfaces. Traced geometry needs review; inspect
+                              roof assumptions in the review list.
+                            </p>
+                          )}
                           <select
                             aria-label="Select model element"
                             value=""
@@ -737,6 +749,12 @@ export default function Studio() {
                         </>
                       ) : (
                         <>
+                          {"approximation" in element &&
+                          element.approximation ? (
+                            <p className="fineprint">
+                              Roof assumptions: {element.approximation}
+                            </p>
+                          ) : null}
                           <label className="field">
                             Name
                             <input
@@ -1022,6 +1040,8 @@ export default function Studio() {
                     <span>
                       {model.levels.length} floors · {model.walls.length} walls
                       · {model.openings.length} openings
+                      {model.detailProvenance &&
+                        ` · ${model.roofs.length} roof surfaces`}
                     </span>
                     <button
                       onClick={async () => {
@@ -1070,7 +1090,9 @@ export default function Studio() {
                 <section className="panel">
                   <h2>Source sheets & processing</h2>
                   <p>
-                    Choose the drawings needed for the shell and schedules.
+                    {session?.shellFusion
+                      ? "Experimental shell: choose 2–8 sheets together, including every enclosed floor plan and supporting sections or elevations. Add roof plans and schedules where useful."
+                      : "Choose the drawings needed for the shell and schedules."}{" "}
                     Processing continues when this page is closed.
                   </p>
                   {!detail?.plans.length && <p>No PDF uploaded yet.</p>}
@@ -1230,6 +1252,65 @@ export default function Studio() {
                     Dimensions reflect this model revision. Check source
                     evidence before relying on them.
                   </p>
+                  {!!model.scheduleEntries?.length && (
+                    <>
+                      <h3>Source schedule rows</h3>
+                      <p>
+                        Quantities are from the schedule. They do not create
+                        placed openings. Unknown values need review.
+                      </p>
+                      <div className="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Tag</th>
+                              <th>Kind / tag meaning</th>
+                              <th>Quantity</th>
+                              <th>Width × height</th>
+                              <th>Source</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {model.scheduleEntries.map((o) => (
+                              <tr key={o.id}>
+                                <td>{o.tag}</td>
+                                <td>
+                                  {o.kind} / {o.tagRole}
+                                </td>
+                                <td>{o.quantity ?? "Unknown"}</td>
+                                <td>
+                                  {o.width === null
+                                    ? "Unknown"
+                                    : formatFeet(o.width)}{" "}
+                                  ×{" "}
+                                  {o.height === null
+                                    ? "Unknown"
+                                    : formatFeet(o.height)}
+                                </td>
+                                <td>
+                                  {o.evidence.map((e, i) => (
+                                    <button
+                                      key={i}
+                                      onClick={() =>
+                                        setSource({
+                                          planId: e.planId,
+                                          page: e.page,
+                                          region: e.region,
+                                        })
+                                      }
+                                    >
+                                      {e.sheet || `Page ${e.page}`}
+                                    </button>
+                                  ))}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                  <h3>Individual model openings</h3>
                   <div className="table-wrap">
                     <table>
                       <thead>
@@ -1317,6 +1398,37 @@ export default function Studio() {
                       </label>
                     </div>
                   ))}
+                  {!!model.unresolvedObservations?.length && (
+                    <>
+                      <h3>Observations needing geometry review</h3>
+                      <p>
+                        These observations are retained but are not drawn. Check
+                        their source before adding or correcting model geometry.
+                      </p>
+                      {model.unresolvedObservations.map((o, index) => (
+                        <details className="issue" key={`${o.id}-${index}`}>
+                          <summary>
+                            {o.label || o.id} · {o.kind}
+                          </summary>
+                          <p>{o.reason}</p>
+                          {o.evidence.map((e, i) => (
+                            <button
+                              key={i}
+                              onClick={() =>
+                                setSource({
+                                  planId: e.planId,
+                                  page: e.page,
+                                  region: e.region,
+                                })
+                              }
+                            >
+                              View {e.sheet || `page ${e.page}`}
+                            </button>
+                          ))}
+                        </details>
+                      ))}
+                    </>
+                  )}
                   <h3>Model checks</h3>
                   {validation.map((i, n) => (
                     <div className="issue" key={n}>

@@ -394,7 +394,7 @@ export default function ModelViewer(props: Props) {
               g,
               polygonFraming(
                 r.vertices.map((v) => [v[0], v[2]]),
-                [],
+                (r.voids ?? []).map((h) => h.map((v) => [v[0], v[2]])),
                 p.spacing,
               ).map((line) => ({
                 start: [
@@ -412,15 +412,18 @@ export default function ModelViewer(props: Props) {
             );
             continue;
           }
+          const allRoofPoints = [...r.vertices, ...(r.voids ?? []).flat()];
           const triangles = THREE.ShapeUtils.triangulateShape(
               r.vertices.map((v) => new THREE.Vector2(v[0], v[2])),
-              [],
+              (r.voids ?? []).map((h) =>
+                h.map((v) => new THREE.Vector2(v[0], v[2])),
+              ),
             ),
             vertices = triangles.flatMap((t) =>
               t.flatMap((i) => [
-                (r.vertices[i][0] - cx) / 1000,
-                r.vertices[i][1] / 1000,
-                (r.vertices[i][2] - cz) / 1000,
+                (allRoofPoints[i][0] - cx) / 1000,
+                allRoofPoints[i][1] / 1000,
+                (allRoofPoints[i][2] - cz) / 1000,
               ]),
             );
           const geo = new THREE.BufferGeometry();

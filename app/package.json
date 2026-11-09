@@ -13,7 +13,9 @@
     "import:legacy": "node --env-file-if-exists=.env.local --import tsx scripts/import-legacy.ts",
     "check:setup": "node --env-file-if-exists=.env.local --import tsx scripts/check-setup.ts",
     "benchmark": "node --import tsx scripts/benchmark.ts",
-    "worker": "worker/.venv/bin/python scripts/worker-dev.py"
+    "worker": "worker/.venv/bin/python scripts/worker-dev.py",
+    "evaluate:models": "node --env-file-if-exists=.env.local --import tsx scripts/evaluate-models.ts",
+    "evaluate:shells": "node --env-file-if-exists=.env.local --import tsx scripts/evaluate-shells.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "latest",

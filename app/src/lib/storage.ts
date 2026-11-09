@@ -39,7 +39,7 @@ export async function deleteSource(key: string) {
   }
 }
 export async function writeArtifact(key: string, data: unknown) {
-  if (!/^artifacts\/[a-f0-9-]+\/page-\d+\.json$/.test(key))
+  if (!/^artifacts\/[a-f0-9-]+\/page-\d+(?:-v[1-9]\d*)?\.json$/.test(key))
     throw new Error("Invalid artifact key");
   const text = JSON.stringify(data);
   if (localMode()) {
@@ -57,7 +57,7 @@ export async function writeArtifact(key: string, data: unknown) {
   }
 }
 export async function readArtifact(key: string) {
-  if (!/^artifacts\/[a-f0-9-]+\/page-\d+\.json$/.test(key))
+  if (!/^artifacts\/[a-f0-9-]+\/page-\d+(?:-v[1-9]\d*)?\.json$/.test(key))
     throw new Error("Invalid artifact key");
   if (localMode())
     return JSON.parse(await readFile(path.join(".local/files", key), "utf8"));
