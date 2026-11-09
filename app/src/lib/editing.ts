@@ -84,11 +84,14 @@ export function transformElement(
       l.voids = l.voids.map((v) => v.map(change));
       l.elevation += t.dy;
     }
-    if (r)
-      r.vertices = r.vertices.map((p) => {
+    if (r) {
+      const changeRoofPoint = (p: number[]) => {
         const v = change([p[0], p[2]]);
         return [v[0], p[1] + t.dy, v[1]];
-      });
+      };
+      r.vertices = r.vertices.map(changeRoofPoint);
+      r.voids = r.voids?.map((h) => h.map(changeRoofPoint));
+    }
   }
   if (o && o.wallId) {
     const wall = m.walls.find((w) => w.id === o.wallId);

@@ -15,7 +15,8 @@ import pdfplumber
 from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
 from pydantic import BaseModel, Field
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter, Transformation
+from pypdf.generic import RectangleObject
 
 app = FastAPI(title="Fraaime PDF preparation", docs_url=None, redoc_url=None)
 
@@ -79,7 +80,7 @@ def inspect_file(path: Path, max_pages: int):
     sheets=[]
     for index, page in enumerate(pdf.pages):
         text = (page.extract_text() or '')[:12000]
-        width, height = float(page.mediabox.width), float(page.mediabox.height)
+        width, height = float(page.cropbox.width), float(page.cropbox.height)
         rotation = int(page.get('/Rotate',0)) % 360
         if rotation in (90,270):
             width,height=height,width
@@ -93,10 +94,24 @@ def page_file(path: Path, page_number: int, max_pages: int):
     pdf=reader(path,max_pages)
     if page_number>len(pdf.pages):
         raise HTTPException(422,'Page is outside the document')
+    # Normalize a private single-page copy before BOTH rendering and vector extraction.
+    # This handles nonzero MediaBox origins, CropBox offsets and /Rotate identically.
+    writer = PdfWriter()
+    source_page = writer.add_page(pdf.pages[page_number-1])
+    original_rotation = source_page.rotation
+    source_page.transfer_rotation_to_content()
+    box = source_page.cropbox
+    width, height = round(float(box.width), 5), round(float(box.height), 5)
+    source_page.add_transformation(Transformation().translate(-float(box.left), -float(box.bottom)))
+    source_page.mediabox = RectangleObject([0, 0, width, height])
+    source_page.cropbox = RectangleObject([0, 0, width, height])
+    normalized = path.parent / 'normalized-page.pdf'
+    with normalized.open('wb') as f:
+        writer.write(f)
     # Poppler renders rotation/crop boxes. Rendering is bounded by pixel dimensions and a timeout.
     prefix=path.parent/'page'
     try:
-        subprocess.run(['pdftoppm','-f',str(page_number),'-l',str(page_number),'-singlefile','-scale-to','3072','-jpeg','-jpegopt','quality=78',str(path),str(prefix)],check=True,timeout=90,capture_output=True)
+        subprocess.run(['pdftoppm','-f','1','-l','1','-cropbox','-singlefile','-scale-to','3072','-jpeg','-jpegopt','quality=78',str(normalized),str(prefix)],check=True,timeout=90,capture_output=True)
     except (subprocess.SubprocessError,FileNotFoundError):
         raise HTTPException(422,'Could not render this page')
     images=[]
@@ -106,14 +121,41 @@ def page_file(path: Path, page_number: int, max_pages: int):
             crop.thumbnail((1536,1536))
             buf=io.BytesIO();crop.save(buf,format='JPEG',quality=68)
             images.append(dict(region=region,base64=base64.b64encode(buf.getvalue()).decode()))
-    with pdfplumber.open(path) as doc:
-        page=doc.pages[page_number-1]
-        lines=[[float(l['x0']),float(l['top']),float(l['x1']),float(l['bottom'])] for l in page.lines[:2000]]
-        return dict(page=page_number,width=float(page.width),height=float(page.height),rotation=page.rotation,text=(page.extract_text() or '')[:30000],lines=lines,images=images)
+    with pdfplumber.open(normalized) as doc:
+        page=doc.pages[0]
+        lines=[]
+        for line in page.lines:
+            # Bounding-box corners reverse descending diagonals. Use true endpoints.
+            pts=line.get('pts', [])
+            if len(pts) != 2:
+                continue
+            segment=clip_segment([*pts[0], *pts[1]], width, height)
+            if segment is not None:
+                lines.append(segment)
+            if len(lines) >= 2000:
+                break
+        visible=page.crop((0,0,width,height))
+        return dict(evidenceVersion=2,coordinateSpace='displayed-crop-points',page=page_number,width=width,height=height,rotation=0,sourceRotation=original_rotation,text=(visible.extract_text() or '')[:30000],lines=lines,images=images)
+
+def clip_segment(segment, width, height):
+    """Liang-Barsky clipping preserves diagonal direction at the visible boundary."""
+    x0,y0,x1,y1=map(float,segment)
+    dx,dy=x1-x0,y1-y0
+    lo,hi=0.0,1.0
+    for p,q in [(-dx,x0),(dx,width-x0),(-dy,y0),(dy,height-y0)]:
+        if p == 0:
+            if q < 0: return None
+        elif p < 0:
+            lo=max(lo,q/p)
+        else:
+            hi=min(hi,q/p)
+        if lo > hi: return None
+    if dx == 0 and dy == 0: return None
+    return [round(max(0,min(width,x0+lo*dx)),5),round(max(0,min(height,y0+lo*dy)),5),round(max(0,min(width,x0+hi*dx)),5),round(max(0,min(height,y0+hi*dy)),5)]
 
 @app.get('/health')
 def health():
-    return {'ok':True}
+    return {'ok':True,'evidenceVersion':2}
 
 @app.post('/inspect')
 async def inspect(data: Input, authorization: str | None=Header(default=None)):

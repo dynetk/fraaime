@@ -73,6 +73,26 @@ export const Calibration = z.object({
   dimensionText: z.string(),
   confirmed: z.boolean(),
 });
+// Schedule rows describe a type or an identified instance, never implied placements.
+export const ScheduleEntry = z.object({
+  ...base,
+  kind: z.enum(["door", "window"]),
+  tag: z.string(),
+  tagRole: z.enum(["type", "instance", "unknown"]),
+  quantity: z.number().int().positive().max(10000).nullable(),
+  width: z.number().positive().max(50000).nullable(),
+  height: z.number().positive().max(30000).nullable(),
+  sill: z.number().nonnegative().max(30000).nullable(),
+  operation: z.string(),
+});
+export const UnresolvedObservation = z.object({
+  id,
+  kind: z.string(),
+  label: z.string(),
+  reason: z.string(),
+  evidence: z.array(Evidence),
+  raw: z.string(),
+});
 export const ExtractionModelSchema = z.object({
   schemaVersion: z.literal(1),
   units: z.literal("mm"),
@@ -87,6 +107,41 @@ export const ExtractionModelSchema = z.object({
 });
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
+  walls: z
+    .array(
+      Wall.extend({
+        role: z.enum(["exterior", "courtyard", "interior"]).optional(),
+      }),
+    )
+    .max(3000),
+  roofs: z
+    .array(
+      Roof.extend({
+        voids: z
+          .array(z.array(z.array(coord).length(3)).min(3).max(100))
+          .max(50)
+          .optional(),
+        surface: z.enum(["roof", "roof-deck"]).optional(),
+        approximation: z.string().optional(),
+      }),
+    )
+    .max(500),
+  detailProvenance: z
+    .object({
+      version: z.literal(1),
+      sourcePages: z.array(z.number().int().positive()),
+      roofCoverage: z.number().min(0).max(1),
+    })
+    .optional(),
+  shellProvenance: z
+    .object({
+      version: z.literal(1),
+      datum: z.string(),
+      sourcePages: z.array(z.number().int().positive()),
+    })
+    .optional(),
+  scheduleEntries: z.array(ScheduleEntry).max(3000).optional(),
+  unresolvedObservations: z.array(UnresolvedObservation).max(10000).optional(),
   framingAssemblies: z
     .array(
       z.object({
@@ -154,9 +209,18 @@ export function validateModel(model: BuildingModel): ModelIssue[] {
       if (hole.length < 3)
         add(l.id, "Floor void requires at least three points.");
   }
+  for (const l of model.levels)
+    if (l.height < 100)
+      add(l.id, "Floor height is implausibly small; verify units.");
+  for (const w of model.walls) {
+    if (w.height < 100 || w.thickness < 10)
+      add(w.id, "Wall dimensions are implausibly small; verify units.");
+  }
   for (const w of model.walls)
     if (length(w) < 10) add(w.id, "Wall is shorter than 10 mm.");
   for (const o of model.openings) {
+    if (o.width < 25 || o.height < 25)
+      add(o.id, "Opening dimensions are implausibly small; verify units.");
     if (!o.wallId) {
       add(o.id, "Opening is unplaced; preserved in the schedule.", "warning");
       continue;

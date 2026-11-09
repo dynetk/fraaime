@@ -16,7 +16,7 @@ With the correct identity, open GitHub Settings → Applications → Installed G
 | Runtime | Node.js 24.x | Python 3.12 in Dockerfile |
 | Install / build | `npm ci` / `npm run build` | Dockerfile |
 | Function region | `sfo1` | `sfo1` |
-| Function duration | 300 seconds | 300 seconds |
+| Function duration | API 300 seconds; Workflow uses host maximum, at least 800 seconds | 300 seconds |
 
 Do not select the FastAPI preset for the worker: the Dockerfile installs Poppler. Confirm Container Runtime availability in the target account. Keep the same worker portable if another container host is needed.
 
@@ -45,9 +45,10 @@ Enter secrets in Vercel Settings → Environment Variables as Secret/Sensitive v
 | `PDF_WORKER_TOKEN` | Both | The same new strong random secret; different from local development |
 | `PORT` | Worker | `8000` |
 | `OPENAI_API_KEY` | Web | Project-scoped OpenAI key |
-| `OPENAI_MODEL` | Web | `gpt-4.1` baseline, configurable |
-| `OPENAI_INPUT_USD_PER_MILLION` | Web | Verified current model input token price |
-| `OPENAI_OUTPUT_USD_PER_MILLION` | Web | Verified current model output token price |
+| `OPENAI_MODEL` | Web | Candidate: `gpt-6.1-sol`; promote only after private evaluation |
+| `OPENAI_REASONING_EFFORT` | Web | `medium` |
+| `OPENAI_INPUT_USD_PER_MILLION` | Web | `2`, Sol standard input price verified 2026-11-09 |
+| `OPENAI_OUTPUT_USD_PER_MILLION` | Web | `10`, includes reasoning tokens; verified 2026-11-09 |
 | `JOB_BUDGET_USD` / `MONTHLY_BUDGET_USD` | Web | `10` / `100` pilot caps |
 | `MAX_ACTIVE_JOBS` | Web | `2` |
 | `MAX_UPLOAD_MB` / `MAX_PDF_PAGES` / `MAX_AI_PAGES` | Web | `120` / `150` / `30` |
@@ -79,3 +80,10 @@ Do not overwrite `.env.local`; it belongs to the existing local demo environment
 A configuration page or a Vercel Ready build is not an operational PDF-to-model pilot. Google sign-in, Neon schema, private storage, service-to-service requests, Workflow dispatch, and AI extraction must all be checked on the deployed environment.
 
 For implementation details, API contracts, evaluation, and remaining limitations, see the [application README](README.md).
+
+### Experimental joint-sheet shell
+
+The reviewed pilot release enables `FRAAIME_SHELL_FUSION=1` for new 2–8-sheet jobs using Sol medium. Select floor plans together with sections/elevations; roof plans and schedules are supporting sheets. This mode uses its own fixed Sol pricing and still honors job/account spending limits. Deploy the version 2 PDF worker and updated private artifact storage code together with the app. See [EVALUATION.md](EVALUATION.md) for the private test runner, limits, and promotion gates. A saved model remains a draft until source geometry, local height variations, roof completeness, and openings have been reviewed.
+
+
+The reviewed pilot also enables `FRAAIME_SHELL_DETAILS=1` for the interior-wall/roof pass. It adds a second Sol call and an independent budget checkpoint, preserves the base shell on failure, and stores roof holes and approximation notes in editable models. Configure Fluid Compute with an 800-second function default; the generated Workflow handler requests the host maximum, allowing the ten-minute detail API timeout plus persistence overhead. The web route only enqueues jobs. Confirm the built Workflow function's duration before release. See EVALUATION.md for comparison and timeout-cost handling. Set both flags to `0` and redeploy to disable this path for new jobs; existing checkpoints retain their processing mode.

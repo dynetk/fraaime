@@ -1,5 +1,5 @@
-import { FatalError, RetryableError } from "workflow";
-import { database, now, uid, audit } from "../lib/db";
+import { FatalError } from "workflow";
+import { database, now, uid } from "../lib/db";
 import {
   worker,
   pageEvidence,
@@ -7,13 +7,29 @@ import {
   type PageEvidence,
 } from "../lib/worker";
 import {
-  assemble,
   openAIProvider,
   pricing,
   reserveCost,
   type ExtractedPage,
+  ExtractionFailure,
 } from "../lib/extraction";
 import { limit } from "../lib/config";
+import { aiSettings, tokenCost } from "../lib/ai-config";
+import {
+  extractShell,
+  reserveShellCost,
+  MAX_SHELL_PAGES,
+} from "../lib/shell-provider";
+import { SOL_MODEL, usageCost } from "../lib/ai-config";
+import {
+  assembleStoredResults,
+  type ShellResult,
+  type StoredResult,
+} from "../lib/shell-results";
+import {
+  extractShellDetail,
+  reserveDetailCost,
+} from "../lib/shell-detail-provider";
 import { saveCandidate } from "../lib/revisions";
 
 type Job = {
@@ -73,8 +89,182 @@ async function prepare(jobId: string) {
     "SELECT p.manifest,pr.name FROM plans p JOIN projects pr ON pr.id=p.project_id WHERE p.id=$1",
     [j.plan_id],
   );
-  return { job: j, manifest: plan.rows[0].manifest, name: plan.rows[0].name };
+  const calls = await db.query<{ page: number; result: ShellResult | null }>(
+    "SELECT page,result FROM ai_calls WHERE job_id=$1",
+    [jobId],
+  );
+  // Existing checkpoints pin the processing mode across retries/config changes.
+  const fusion = calls.rows.length
+    ? calls.rows.some((c) => c.page === 0)
+    : process.env.FRAAIME_SHELL_FUSION === "1";
+  if (fusion && (j.pages.length < 2 || j.pages.length > MAX_SHELL_PAGES))
+    throw new FatalError(
+      `Cross-sheet shell requires 2–${MAX_SHELL_PAGES} selected sheets.`,
+    );
+  return {
+    job: j,
+    manifest: plan.rows[0].manifest,
+    name: plan.rows[0].name,
+    fusion,
+    details:
+      fusion &&
+      (calls.rows.length
+        ? calls.rows.some((c) => c.page === -1 || c.result?.detailRequested)
+        : process.env.FRAAIME_SHELL_DETAILS === "1"),
+  };
 }
+async function prepareShellPage(jobId: string, page: number) {
+  "use step";
+  const j = await getJob(jobId);
+  await phase(jobId, `Preparing source page ${page}`);
+  await pageEvidence(j.plan_id, page);
+  // Large image payloads stay in private artifact storage, outside workflow history.
+}
+async function extractProjectShell(
+  jobId: string,
+  name: string,
+  detailRequested = false,
+  detailStage = false,
+) {
+  "use step";
+  const j = await getJob(jobId),
+    db = await database();
+  const checkpoint = detailStage ? -1 : 0;
+  const old = await db.query<{ state: string; result: ShellResult }>(
+    "SELECT state,result FROM ai_calls WHERE job_id=$1 AND page=$2",
+    [jobId, checkpoint],
+  );
+  if (old.rows[0]?.state === "complete") return;
+  if (old.rows[0])
+    throw new FatalError(
+      "Previous shell API call has uncertain status. No automatic duplicate charge; review before starting a new job.",
+    );
+  const pages: PageEvidence[] = [];
+  for (const page of j.pages) pages.push(await pageEvidence(j.plan_id, page));
+  const base = detailStage
+    ? (
+        await db.query<{ result: ShellResult }>(
+          "SELECT result FROM ai_calls WHERE job_id=$1 AND page=0 AND state='complete'",
+          [jobId],
+        )
+      ).rows[0]?.result
+    : undefined;
+  if (detailStage && (!base || base.kind !== "project-shell"))
+    throw new FatalError("Completed base shell required before details.");
+  const reserved = detailStage
+      ? reserveDetailCost(pages, base!.model, base!.draft)
+      : reserveShellCost(pages),
+    callId = uid();
+  await db.transaction(async (tx) => {
+    await tx.query("SELECT id FROM spend_lock WHERE id=1 FOR UPDATE");
+    const current = await tx.query<{ state: string }>(
+      "SELECT state FROM jobs WHERE id=$1",
+      [jobId],
+    );
+    if (current.rows[0]?.state === "cancelled")
+      throw new FatalError("Job cancelled");
+    const prior = await tx.query(
+      "SELECT id FROM ai_calls WHERE job_id=$1 AND page=$2",
+      [jobId, checkpoint],
+    );
+    if (prior.rows.length)
+      throw new FatalError(
+        "Job already has API checkpoints; no duplicate request made.",
+      );
+    const monthly = await tx.query<{ total: string }>(
+      "SELECT COALESCE(SUM(COALESCE(cost_usd,reserved_usd)),0) AS total FROM ai_calls WHERE created_at >= $1",
+      [new Date().toISOString().slice(0, 7) + "-01"],
+    );
+    const spent = await tx.query<{ total: string }>(
+      "SELECT COALESCE(SUM(COALESCE(cost_usd,reserved_usd)),0) AS total FROM ai_calls WHERE job_id=$1",
+      [jobId],
+    );
+    if (
+      Number(monthly.rows[0].total) + reserved >
+        limit("MONTHLY_BUDGET_USD", 100) ||
+      Number(spent.rows[0].total) + reserved > Number(j.budget_usd)
+    )
+      throw new FatalError(
+        "Budget limit reached before joint shell extraction.",
+      );
+    await tx.query(
+      "INSERT INTO ai_calls(id,job_id,page,state,reserved_usd,model,created_at) VALUES($1,$2,$3,'started',$4,$5,$6)",
+      [callId, jobId, checkpoint, reserved, SOL_MODEL, now()],
+    );
+  });
+  await phase(
+    jobId,
+    detailStage
+      ? "Adding interior partitions and roof surfaces"
+      : "Reconciling floor plans, elevations, and sections",
+  );
+  try {
+    const result = detailStage
+      ? await extractShellDetail(pages, j.plan_id, base!.model, base!.draft)
+      : await extractShell(pages, j.plan_id, name);
+    const stored: ShellResult = {
+      kind: "project-shell",
+      model: result.model,
+      draft: detailStage ? base!.draft : (result.draft as ShellResult["draft"]),
+      sourcePages: j.pages,
+      detailRequested,
+      ...(detailStage
+        ? {
+            detailDraft: result.draft as NonNullable<
+              ShellResult["detailDraft"]
+            >,
+          }
+        : {}),
+    };
+    await db.transaction(async (tx) => {
+      await tx.query(
+        "UPDATE ai_calls SET state='complete',result=$1,cost_usd=$2,input_tokens=$3,output_tokens=$4,response_id=$5 WHERE id=$6",
+        [
+          JSON.stringify(stored),
+          usageCost(
+            result.inputTokens,
+            result.outputTokens,
+            result.cachedInputTokens,
+            SOL_MODEL,
+          ),
+          result.inputTokens,
+          result.outputTokens,
+          result.responseId,
+          callId,
+        ],
+      );
+      await tx.query(
+        "UPDATE jobs SET completed_pages=$1,updated_at=$2 WHERE id=$3",
+        [JSON.stringify(j.pages), now(), jobId],
+      );
+    });
+  } catch (error) {
+    const details = error instanceof ExtractionFailure ? error.details : null,
+      u = details?.usage;
+    await db.query(
+      "UPDATE ai_calls SET state='uncertain',error=$1,cost_usd=$2,input_tokens=$3,output_tokens=$4,response_id=$5 WHERE id=$6 AND state<>'complete'",
+      [
+        error instanceof Error ? error.message : "Shell extraction failed",
+        u
+          ? usageCost(
+              u.inputTokens,
+              u.outputTokens,
+              u.cachedInputTokens,
+              SOL_MODEL,
+            )
+          : null,
+        u?.inputTokens ?? null,
+        u?.outputTokens ?? null,
+        details?.responseId ?? null,
+        callId,
+      ],
+    );
+    throw new FatalError(
+      "Shell extraction stopped; no automatic duplicate API call will be made.",
+    );
+  }
+}
+extractProjectShell.maxRetries = 0;
 async function extractPage(jobId: string, page: number, context: string) {
   "use step";
   const j = await getJob(jobId);
@@ -92,7 +282,7 @@ async function extractPage(jobId: string, page: number, context: string) {
   const evidence = await pageEvidence(j.plan_id, page);
   const reserved = reserveCost(evidence, context);
   const callId = uid(),
-    model = process.env.OPENAI_MODEL || "gpt-4.1";
+    model = aiSettings().model;
   await db.transaction(async (tx) => {
     await tx.query("SELECT id FROM spend_lock WHERE id=1 FOR UPDATE");
     const current = await tx.query<{ state: string }>(
@@ -125,9 +315,12 @@ async function extractPage(jobId: string, page: number, context: string) {
   try {
     const result = await openAIProvider().extract(evidence, j.plan_id, context);
     const rates = pricing();
-    const cost =
-      (result.inputTokens * rates.input + result.outputTokens * rates.output) /
-      1e6;
+    const cost = tokenCost(
+      result.inputTokens,
+      result.outputTokens,
+      rates,
+      model,
+    );
     await db.transaction(async (tx) => {
       await tx.query(
         "UPDATE ai_calls SET state='complete',result=$1,cost_usd=$2,input_tokens=$3,output_tokens=$4,response_id=$5 WHERE id=$6",
@@ -147,9 +340,20 @@ async function extractPage(jobId: string, page: number, context: string) {
     });
     return result.data;
   } catch (error) {
+    const usage =
+      error instanceof ExtractionFailure ? error.details.usage : null;
     await db.query(
-      "UPDATE ai_calls SET state='uncertain',error=$1 WHERE id=$2",
-      [error instanceof Error ? error.message : "Extraction failed", callId],
+      "UPDATE ai_calls SET state='uncertain',error=$1,cost_usd=$3,input_tokens=$4,output_tokens=$5,response_id=$6 WHERE id=$2",
+      [
+        error instanceof Error ? error.message : "Extraction failed",
+        callId,
+        usage
+          ? tokenCost(usage.inputTokens, usage.outputTokens, pricing(), model)
+          : null,
+        usage?.inputTokens ?? null,
+        usage?.outputTokens ?? null,
+        error instanceof ExtractionFailure ? error.details.responseId : null,
+      ],
     );
     throw new FatalError(
       `Page ${page} extraction failed. No automatic duplicate API call will be made.`,
@@ -161,7 +365,7 @@ async function finish(jobId: string) {
   "use step";
   const j = await getJob(jobId),
     db = await database();
-  const { rows } = await db.query<{ page: number; result: ExtractedPage }>(
+  const { rows } = await db.query<StoredResult>(
     "SELECT page,result FROM ai_calls WHERE job_id=$1 AND state='complete' ORDER BY page",
     [jobId],
   );
@@ -172,14 +376,8 @@ async function finish(jobId: string) {
   if (!rows.length)
     throw new FatalError("No usable page results were returned.");
   await phase(jobId, "Validating model");
-  const all = p.rows[0].manifest.sheets.map((s) => s.page),
-    done = new Set(rows.map((r) => r.page));
-  const model = assemble(
-    rows,
-    p.rows[0].name,
-    j.plan_id,
-    all.filter((n) => !done.has(n)),
-  );
+  const all = p.rows[0].manifest.sheets.map((s) => s.page);
+  const model = assembleStoredResults(rows, p.rows[0].name, j.plan_id, all);
   await saveCandidate(db, j.project_id, jobId, j.base_head, model);
   await db.query(
     "UPDATE jobs SET state='needs_review',phase='Draft ready for review',updated_at=$1 WHERE id=$2 AND state<>'cancelled'",
@@ -201,7 +399,7 @@ async function fail(jobId: string, message: string) {
     state: string;
   }>("SELECT * FROM jobs WHERE id=$1", [jobId]);
   if (!j.rows[0] || j.rows[0].state === "cancelled") return;
-  const { rows } = await db.query<{ page: number; result: ExtractedPage }>(
+  const { rows } = await db.query<StoredResult>(
     "SELECT page,result FROM ai_calls WHERE job_id=$1 AND state='complete' ORDER BY page",
     [jobId],
   );
@@ -210,13 +408,11 @@ async function fail(jobId: string, message: string) {
       "SELECT p.manifest,pr.name FROM plans p JOIN projects pr ON pr.id=p.project_id WHERE p.id=$1",
       [j.rows[0].plan_id],
     );
-    const m = assemble(
+    const m = assembleStoredResults(
       rows,
       p.rows[0].name,
       j.rows[0].plan_id,
-      p.rows[0].manifest.sheets
-        .map((s) => s.page)
-        .filter((n) => !rows.some((r) => r.page === n)),
+      p.rows[0].manifest.sheets.map((s) => s.page),
     );
     m.issues.push({
       id: "partial-run",
@@ -244,6 +440,15 @@ export async function processPlan(jobId: string, mode: "inspect" | "extract") {
       return;
     }
     const prepared = await prepare(jobId);
+    if (prepared.fusion) {
+      for (const page of prepared.job.pages)
+        await prepareShellPage(jobId, page);
+      await extractProjectShell(jobId, prepared.name, prepared.details);
+      if (prepared.details)
+        await extractProjectShell(jobId, prepared.name, true, true);
+      await finish(jobId);
+      return;
+    }
     let context = "";
     for (const page of prepared.job.pages) {
       const result = await extractPage(jobId, page, context);

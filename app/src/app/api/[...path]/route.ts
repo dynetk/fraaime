@@ -19,6 +19,7 @@ import {
   type Manifest,
   type PageEvidence,
 } from "@/lib/worker";
+import { MAX_SHELL_PAGES } from "@/lib/shell-provider";
 import { pricing } from "@/lib/extraction";
 import { processPlan } from "@/workflows/process-plan";
 export const runtime = "nodejs";
@@ -56,6 +57,7 @@ const handler = route(async (r) => {
         !!process.env.OPENAI_INPUT_USD_PER_MILLION &&
         !!process.env.OPENAI_OUTPUT_USD_PER_MILLION,
       workerConfigured: !!process.env.PDF_WORKER_TOKEN,
+      shellFusion: process.env.FRAAIME_SHELL_FUSION === "1",
     });
   if (resource === "invitations") {
     if (user.role !== "admin")
@@ -502,7 +504,7 @@ const handler = route(async (r) => {
             503,
             "OpenAI is not configured. Your PDF remains available.",
           );
-        pricing();
+        if (process.env.FRAAIME_SHELL_FUSION !== "1") pricing();
       }
       const pages = [...new Set(b.pages ?? j.pages)];
       if (
@@ -511,6 +513,15 @@ const handler = route(async (r) => {
           pages.some((n) => n > (plan.rows[0].manifest?.pageCount ?? 0)))
       )
         throw new HttpError(400, "Choose valid source pages");
+      if (
+        mode === "extract" &&
+        process.env.FRAAIME_SHELL_FUSION === "1" &&
+        (pages.length < 2 || pages.length > MAX_SHELL_PAGES)
+      )
+        throw new HttpError(
+          400,
+          `Select 2–${MAX_SHELL_PAGES} sheets including floor plans and sections/elevations for the experimental shell.`,
+        );
       await db.transaction(async (tx) => {
         await tx.query("SELECT id FROM spend_lock WHERE id=1 FOR UPDATE");
         const active = await tx.query<{ count: string }>(

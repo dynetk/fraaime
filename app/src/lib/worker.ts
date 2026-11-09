@@ -17,6 +17,9 @@ export interface Manifest {
   warnings: string[];
 }
 export interface PageEvidence {
+  evidenceVersion?: number;
+  coordinateSpace?: string;
+  sourceRotation?: number;
   page: number;
   width: number;
   height: number;
@@ -65,9 +68,14 @@ export async function pageEvidence(
     "SELECT data FROM page_artifacts WHERE plan_id=$1 AND page=$2",
     [planId, page],
   );
-  if (old.rows[0]) return readArtifact(old.rows[0].data.storageKey);
+  if (old.rows[0]) {
+    const cached = (await readArtifact(
+      old.rows[0].data.storageKey,
+    )) as PageEvidence;
+    if (cached.evidenceVersion === 2) return cached;
+  }
   const data = await worker<PageEvidence>("/page", planId, page),
-    key = `artifacts/${planId}/page-${page}.json`;
+    key = `artifacts/${planId}/page-${page}-v2.json`;
   // Recheck deletion before writing an artifact after an expensive render.
   await db.transaction(async (tx) => {
     const p = await tx.query(
@@ -77,7 +85,7 @@ export async function pageEvidence(
     if (!p.rows.length) throw new Error("Project deleted");
     await writeArtifact(key, data);
     await tx.query(
-      "INSERT INTO page_artifacts(plan_id,page,data) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+      "INSERT INTO page_artifacts(plan_id,page,data) VALUES($1,$2,$3) ON CONFLICT(plan_id,page) DO UPDATE SET data=EXCLUDED.data",
       [planId, page, JSON.stringify({ storageKey: key })],
     );
   });
