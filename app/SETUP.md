@@ -93,3 +93,25 @@ The reviewed pilot also enables `FRAAIME_SHELL_DETAILS=1` for the interior-wall/
 ### Workflow deployment compatibility
 
 Set `NEXT_ENABLE_ADAPTER=0` in Vercel Production for this release so the standard Next.js builder consumes function metadata. Hosted builds could not resolve the SDK-generated route source, dropping the queue consumer and causing `WORKFLOW_CONSUMER_NOT_REGISTERED`. The Vercel build command runs `scripts/prepare-workflow-deployment.mjs` after Next compiles. It validates the compiled handler and writes the installed SDK's queue trigger and an 800-second duration into Next's function manifest. It fails closed if the handler or expected manifest format is missing. The Build Output API requires the SDK's `consumer` field; the public `vercel.json` queue v2 schema omits that field. Recheck consumer registration and a complete hosted job before removing this compatibility step or upgrading Next.js/Workflow.
+
+
+### Automatic source-sheet suggestions
+
+After indexing, new uploads preselect detected floor plans, sections, elevations,
+and roof plans. Shell extraction accepts up to eight sheets: suggestions keep all
+floor plans, then distribute available slots across the three supporting types.
+Large sets show an omission notice; no floor is silently dropped, even if the floor
+set itself exceeds the limit. Standalone drawing titles take precedence over incidental keywords in notes and legends. Scanned or unreadable titles may require correction. Local checks selected six shell sheets for Santa Barbara, six for Loma Vista, and eight for Wald. Galloway titles are absent from native extracted text; that set still needs OCR or manual selection.
+Use **Use suggested sheets** to refresh an existing selection. Manual choices and
+previous extraction selections take precedence until that button is used.
+Suggestions are a starting point, not a guarantee that every necessary drawing is included.
+
+### Inviting addresses from any email provider
+
+Production Clerk has email sign-up, email verification at sign-up, and email-code
+sign-in enabled alongside Google. An administrator can use **Grant pilot access**
+with any email provider, then share the app URL. This action grants access in the
+application; it does not send an invitation email. Users verify the same address
+that was granted access. Use project sharing separately for existing projects.
+Keep the application invitation check enabled; enabling email sign-in does not
+make customer projects public or grant every signed-in user pilot access.

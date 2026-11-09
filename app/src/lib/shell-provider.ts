@@ -6,7 +6,8 @@ import { required } from "./config";
 import { aiSettings, tokenCost, SOL_MODEL, SOL_PRICING } from "./ai-config";
 import type { PageEvidence } from "./worker";
 export const SHELL_PROMPT_VERSION = "cross-sheet-shell-v2-height-scope";
-export const MAX_SHELL_PAGES = 8;
+import { MAX_SHELL_PAGES } from "./sheet-selection";
+export { MAX_SHELL_PAGES } from "./sheet-selection";
 export function checkShellPages(pages: PageEvidence[]) {
   if (
     pages.length < 2 ||

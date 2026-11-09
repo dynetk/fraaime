@@ -14,7 +14,13 @@ import {
 import { addElement, removeElement, transformElement } from "@/lib/editing";
 import { editWallMember, resetWallFraming } from "@/lib/framing";
 import type { Manifest } from "@/lib/worker";
-import { selectedPlanPages } from "@/lib/sheet-selection";
+import {
+  selectedPlanPages,
+  sheetKind,
+  suggestedPlanPages,
+  SHELL_SHEET_KINDS,
+  MAX_SHELL_PAGES,
+} from "@/lib/sheet-selection";
 const Viewer = dynamic(() => import("./ModelViewer"), {
   ssr: false,
   loading: () => <div className="canvas loading">Opening model…</div>,
@@ -109,6 +115,7 @@ export default function Studio() {
         pageSelections[plan.id],
         detail?.jobs.find((job) => job.plan_id === plan.id && job.pages.length)
           ?.pages,
+        session?.shellFusion ? MAX_SHELL_PAGES : 30,
       ),
     ]),
   );
@@ -421,7 +428,9 @@ export default function Studio() {
             <button
               className="quiet"
               onClick={async () => {
-                const email = await prompt("Email to allow into the pilot");
+                const email = await prompt(
+                  "Email to allow into the pilot (any email provider)",
+                );
                 if (email)
                   run(async () => {
                     await api("invitations", "POST", {
@@ -429,7 +438,7 @@ export default function Studio() {
                       role: "reviewer",
                     });
                     setNotice(
-                      "Pilot access granted. Share the application URL with this person.",
+                      "Pilot access granted. Share the application URL; they can sign in using Google or an email verification code.",
                     );
                   });
               }}
@@ -1103,7 +1112,7 @@ export default function Studio() {
                   <h2>Source sheets & processing</h2>
                   <p>
                     {session?.shellFusion
-                      ? "Experimental shell: choose 2–8 sheets together, including every enclosed floor plan and supporting sections or elevations. Add roof plans and schedules where useful."
+                      ? "Experimental shell: floor plans and supporting sections, elevations, and roof plans are selected automatically, up to 8 sheets. Review the selection before processing. Add schedules where useful."
                       : "Choose the drawings needed for the shell and schedules."}{" "}
                     Processing continues when this page is closed.
                   </p>
@@ -1212,15 +1221,44 @@ export default function Studio() {
                         <>
                           <p className="fineprint">
                             {plan.manifest.pageCount} sheets ·{" "}
-                            {selections[plan.id]?.length ?? 0} selected.{" "}
-                            Detected floor plans are selected automatically for
-                            new uploads. Adjust the selection and add supporting
-                            sections, elevations, and roof plans as needed.{" "}
-                            Confirm sheet selection and scales during review.{" "}
+                            {selections[plan.id]?.length ?? 0} selected. Floor
+                            plans, sections, elevations, and roof plans are
+                            selected automatically for new uploads. You can
+                            adjust the selection before processing. Confirm
+                            sheet selection and scales during review.{" "}
                             {session?.shellFusion
                               ? "Select 2–8 sheets per shell extraction."
                               : "Maximum 30 pages per extraction run."}
                           </p>
+                          <button
+                            className="quiet"
+                            onClick={() =>
+                              setPageSelections((prev) => ({
+                                ...prev,
+                                [plan.id]: suggestedPlanPages(
+                                  plan.manifest,
+                                  session?.shellFusion ? MAX_SHELL_PAGES : 30,
+                                ),
+                              }))
+                            }
+                          >
+                            Use suggested sheets
+                          </button>
+                          {plan.manifest.sheets.filter((sheet) =>
+                            SHELL_SHEET_KINDS.some(
+                              (kind) => kind === sheetKind(sheet),
+                            ),
+                          ).length >
+                            (session?.shellFusion ? MAX_SHELL_PAGES : 30) && (
+                            <p className="fineprint">
+                              This PDF has more relevant sheets than fit in one
+                              run. The suggestion keeps all detected floor plans
+                              and balances the remaining slots between sections,
+                              elevations, and roof plans. Some supporting sheets
+                              are omitted; review coverage if the model is
+                              incomplete.
+                            </p>
+                          )}
                           {session?.shellFusion &&
                             (selections[plan.id]?.length ?? 0) > 8 && (
                               <p className="error-text">
@@ -1229,7 +1267,7 @@ export default function Studio() {
                               </p>
                             )}
                           {!plan.manifest.sheets.some(
-                            (sheet) => sheet.kind === "floor-plan",
+                            (sheet) => sheetKind(sheet) === "floor-plan",
                           ) && (
                             <p className="fineprint">
                               No floor plans were detected automatically. Select
@@ -1267,7 +1305,7 @@ export default function Studio() {
                                   <b>{s.sheet || `Page ${s.page}`}</b>
                                 </label>
                                 <span>
-                                  {s.kind} {s.scanned ? "· scan" : ""}
+                                  {sheetKind(s)} {s.scanned ? "· scan" : ""}
                                 </span>
                                 <button
                                   onClick={() =>
