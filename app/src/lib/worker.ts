@@ -1,4 +1,24 @@
 import { required, limit } from "./config";
+import { z } from "zod";
+export const TitleOcrSchema = z.object({
+  version: z.literal(1),
+  engine: z.literal("tesseract"),
+  status: z.enum(["complete", "unreadable", "failed"]),
+  text: z.string().max(24000),
+  rotation: z.number().optional(),
+  lines: z
+    .array(
+      z.object({
+        text: z.string().max(250),
+        confidence: z.number().min(0).max(100),
+        region: z.array(z.number().min(0).max(1)).length(4),
+      }),
+    )
+    .max(1200),
+  error: z.string().max(500).optional(),
+});
+export type TitleOcr = z.infer<typeof TitleOcrSchema>;
+
 export interface Sheet {
   page: number;
   width: number;
@@ -9,8 +29,11 @@ export interface Sheet {
   sheet: string;
   revision: string;
   scanned: boolean;
+  ocr?: TitleOcr;
 }
 export interface Manifest {
+  indexingVersion?: 1;
+  indexingComplete?: boolean;
   sha256: string;
   pageCount: number;
   sheets: Sheet[];
@@ -46,7 +69,7 @@ export async function worker<T>(
       max_pages: limit("MAX_PDF_PAGES", 150),
       max_bytes: limit("MAX_UPLOAD_MB", 120) * 1024 * 1024,
     }),
-    signal: AbortSignal.timeout(240000),
+    signal: AbortSignal.timeout(endpoint === "/ocr" ? 350000 : 240000),
   });
   if (!response.ok) {
     const body = await response

@@ -5,6 +5,7 @@ import hmac
 import io
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,6 +15,7 @@ import httpx
 import pdfplumber
 from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
+from title_ocr import ocr_file, OCR_VERSION
 from pydantic import BaseModel, Field
 from pypdf import PdfReader, PdfWriter, Transformation
 from pypdf.generic import RectangleObject
@@ -155,7 +157,7 @@ def clip_segment(segment, width, height):
 
 @app.get('/health')
 def health():
-    return {'ok':True,'evidenceVersion':2}
+    return {'ok':True,'evidenceVersion':2,'titleOcrVersion':OCR_VERSION,'titleOcrAvailable':bool(shutil.which(os.getenv('TESSERACT_CMD','tesseract')))}
 
 @app.post('/inspect')
 async def inspect(data: Input, authorization: str | None=Header(default=None)):
@@ -177,3 +179,20 @@ async def page(data: Input, authorization: str | None=Header(default=None)):
         await download(data,path)
         from starlette.concurrency import run_in_threadpool
         return await run_in_threadpool(page_file,path,data.page,data.max_pages)
+
+
+@app.post('/ocr')
+async def title_ocr(data: Input, authorization: str | None=Header(default=None)):
+    authorize(authorization)
+    if data.page is None:
+        raise HTTPException(422,'Page is required')
+    with tempfile.TemporaryDirectory(prefix='fraaime-ocr-') as folder:
+        path=Path(folder)/'source.pdf'
+        await download(data,path)
+        from starlette.concurrency import run_in_threadpool
+        def prepare():
+            pdf=reader(path,data.max_pages)
+            if data.page > len(pdf.pages):
+                raise HTTPException(422,'Page is outside the document')
+            return ocr_file(path,data.page)
+        return await run_in_threadpool(prepare)

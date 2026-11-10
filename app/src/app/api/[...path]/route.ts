@@ -455,8 +455,17 @@ const handler = route(async (r) => {
       }
       return Response.json({ ok: true });
     }
-    if (action === "run" || action === "retry" || action === "new") {
-      if (j.state === "needs_review" || action === "new") {
+    if (
+      action === "run" ||
+      action === "retry" ||
+      action === "new" ||
+      action === "index"
+    ) {
+      if (
+        j.state === "needs_review" ||
+        action === "new" ||
+        action === "index"
+      ) {
         if (!terminal.includes(j.state))
           throw new HttpError(409, "Cancel the active job first.");
         const newId = uid(),
@@ -497,7 +506,12 @@ const handler = route(async (r) => {
         "SELECT manifest FROM plans WHERE id=$1",
         [j.plan_id],
       );
-      const mode = plan.rows[0].manifest ? "extract" : "inspect";
+      const mode =
+        action === "index" ||
+        !plan.rows[0].manifest ||
+        plan.rows[0].manifest.indexingComplete === false
+          ? "inspect"
+          : "extract";
       if (mode === "extract") {
         if (!process.env.OPENAI_API_KEY)
           throw new HttpError(
@@ -506,7 +520,7 @@ const handler = route(async (r) => {
           );
         if (process.env.FRAAIME_SHELL_FUSION !== "1") pricing();
       }
-      const pages = [...new Set(b.pages ?? j.pages)];
+      const pages = mode === "inspect" ? [] : [...new Set(b.pages ?? j.pages)];
       if (
         mode === "extract" &&
         (!pages.length ||
@@ -538,6 +552,21 @@ const handler = route(async (r) => {
         );
         if (!terminal.includes(locked.rows[0].state))
           throw new HttpError(409, "Job already running");
+        const other = await tx.query(
+          "SELECT id FROM jobs WHERE plan_id=$1 AND id<>$2 AND state IN ('preparing','extracting')",
+          [j.plan_id, targetId],
+        );
+        if (other.rows.length)
+          throw new HttpError(409, "This PDF is already being processed.");
+        if (mode === "inspect" && plan.rows[0].manifest) {
+          await tx.query("UPDATE plans SET manifest=$1 WHERE id=$2", [
+            JSON.stringify({
+              ...plan.rows[0].manifest,
+              indexingComplete: false,
+            }),
+            j.plan_id,
+          ]);
+        }
         await tx.query(
           "UPDATE jobs SET state=$1,phase=$2,pages=$3,error=NULL,updated_at=$4 WHERE id=$5",
           [
