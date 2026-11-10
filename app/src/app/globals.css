@@ -505,6 +505,24 @@ main {
   gap: 12px;
   font-size: 12px;
 }
+.job-time {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+.processing-history {
+  margin: 12px 0 20px;
+}
+.processing-history summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 0;
+}
+.history-job {
+  background: transparent;
+  border: 1px solid var(--line);
+}
 .badge {
   padding: 5px 8px;
   background: var(--yellow);
