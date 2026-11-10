@@ -5,12 +5,13 @@ import os
 import re
 import subprocess
 import time
+import tempfile
 from pathlib import Path
 from PIL import Image
 
-OCR_VERSION = 1
+OCR_VERSION = 2
 # Used only to stop orientation retries, not to determine a building's geometry.
-TITLE = re.compile(r'^(?:(?:(?:first|second|third|1st|2nd|3rd|ground|main|upper|lower|basement)\s+)?floor\s+plan(?:\s*\([^)]*\))?|roof(?:\s+deck)?\s+plan|(?:(?:exterior|interior|ext\.)\s+elevations?|elevations)(?:\s*\([^)]*\))?|(?:(?:building|cross|partial|long|short)[ -]+sections?|sections)|(?:site|electrical|power|lighting|framing|foundation)\s+plan|(?:general\s+notes|sheet\s+index|drawing\s+index|index\s+of\s+drawings|drawing\s+list|cover\s+sheet|title\s+sheet)|(?:door|window|door\s*&\s*window)\s+schedules?|(?:[A-Z][A-Z-]*\s+){0,4}details)[,&: ]*$', re.I)
+TITLE = re.compile(r'^(?:(?:(?:first|second|third|1st|2nd|3rd|ground|main|upper|lower|basement)\s+)?floor\s+plan(?:\s*\([^)]*\))?|roof(?:\s+(?:deck|framing))?\s+plan|(?:(?:exterior|interior|ext\.)\s+elevations?|elevations)(?:\s*\([^)]*\))?|(?:(?:building|cross|partial|long|short)[ -]+sections?|sections)|(?:site|electrical|power|lighting|framing|foundation)\s+plan|(?:not\s+used|slab\s+plan|general\s+notes|sheet\s+index|drawing\s+index|index\s+of\s+drawings|drawing\s+list|cover\s+sheet|title\s+sheet)|(?:(?:door|window|door\s*&\s*window)\s+)?schedules?(?:\s*&\s*details)?|(?:[A-Z][A-Z-]*\s+){0,4}details)[,&: ]*$', re.I)
 
 def parse_tsv(data: str, width: int, height: int):
     groups = {}
@@ -37,49 +38,77 @@ def parse_tsv(data: str, width: int, height: int):
         lines.append(dict(text=text, confidence=round(confidence, 1), region=[round(x0/width,5),round(y0/height,5),round(x1/width,5),round(y1/height,5)]))
     return lines[:1200]
 
+def title_lines(lines):
+    """Join adjacent short title lines, without joining unrelated columns."""
+    found = [line for line in lines if TITLE.search(line['text'])]
+    for i, first in enumerate(lines):
+        group = [first]
+        for nxt in lines[i+1:i+3]:
+            previous = group[-1]['region']; r = nxt['region']
+            overlap = min(previous[2], r[2]) - max(previous[0], r[0])
+            if overlap <= 0 or not -0.005 <= r[1]-previous[3] <= 0.035:
+                break
+            group.append(nxt)
+            text = ' '.join(x['text'] for x in group)
+            if len(text) <= 100 and TITLE.search(text):
+                found.append(dict(text=text, confidence=min(x['confidence'] for x in group), region=[min(x['region'][0] for x in group),min(x['region'][1] for x in group),max(x['region'][2] for x in group),max(x['region'][3] for x in group)]))
+    # More specific joined titles precede shorter fragments.
+    return sorted(found, key=lambda x: -len(x['text']))
+
+
 def ocr_file(path: Path, page: int):
-    prefix = path.parent / f'title-{page}'
+    started = time.monotonic()
+    attempts = 0
+    timeouts = 0
+    best = []
+    best_rotation = 0
+    def result(status, lines=None, error=None):
+        selected = (lines if lines is not None else best[:20])
+        value = dict(version=OCR_VERSION, engine='tesseract', status=status, rotation=best_rotation, lines=selected, text='\n'.join(x['text'] for x in selected)[-24000:], attempts=attempts, timedOutAttempts=timeouts, durationMs=round((time.monotonic()-started)*1000))
+        if error: value['error'] = error
+        return value
     try:
-        subprocess.run(['pdftoppm','-f',str(page),'-l',str(page),'-cropbox','-singlefile','-scale-to','3600','-gray','-png',str(path),str(prefix)], check=True,timeout=35,capture_output=True)
-        image_path = prefix.with_suffix('.png')
-        with Image.open(image_path) as original:
-            original.load()
-            best = []
-            best_rotation = 0
-            deadline = time.monotonic() + 25
-            timed_out = False
-            # Start with the usual title-block band; dense drawing notes need not be OCRed.
-            attempts = [(0, True), (0, False), (90, True), (270, True), (180, True), (90, False), (270, False), (180, False)]
-            for rotation, band in attempts:
-                remaining = deadline - time.monotonic()
-                if remaining < 1:
-                    timed_out = True
-                    break
-                im = original.convert('L').rotate(rotation, expand=True)
-                offset = int(im.width * .75) if band else 0
-                crop = im.crop((offset, 0, im.width, im.height))
-                crop.save(image_path)
-                try:
-                    result = subprocess.run([os.getenv('TESSERACT_CMD','tesseract'),str(image_path),'stdout','-l','eng','--psm','11','tsv'],check=True,timeout=min(8,remaining),capture_output=True,text=True,env={**os.environ,'OMP_THREAD_LIMIT':'1'})
-                except subprocess.TimeoutExpired:
-                    timed_out = True
-                    continue
-                lines = parse_tsv(result.stdout, crop.width, crop.height)
-                for line in lines:
-                    region = line['region']
-                    region[0] = round((region[0] * crop.width + offset) / im.width, 5)
-                    region[2] = round((region[2] * crop.width + offset) / im.width, 5)
-                titles = [line for line in lines if TITLE.search(line['text'])]
-                if len(titles) > len([line for line in best if TITLE.search(line['text'])]) or not best:
-                    best, best_rotation = lines, rotation
-                if titles:
-                    break
-        # Retain high-confidence title-like lines even in densely annotated sheets.
-        title_lines = [line for line in best if TITLE.search(line['text'])]
-        others = [line for line in best if not TITLE.search(line['text'])]
-        selected = title_lines if title_lines else others[:20]
-        return dict(version=OCR_VERSION,engine='tesseract',status='complete' if title_lines else ('failed' if timed_out else 'unreadable'),**({'error':'Title OCR reached its time limit. Retry or select this sheet manually.'} if timed_out and not title_lines else {}),rotation=best_rotation,lines=selected,text='\n'.join(line['text'] for line in selected)[-24000:])
+        # Separate high-resolution rendering from small, bounded recognition tasks.
+        # Never overwrite the source render while testing another orientation.
+        with tempfile.TemporaryDirectory(prefix='fraaime-title-') as folder:
+            prefix = Path(folder)/'render'
+            subprocess.run(['pdftoppm','-f',str(page),'-l',str(page),'-cropbox','-singlefile','-scale-to','5000','-gray','-png',str(path),str(prefix)],check=True,timeout=60,capture_output=True)
+            with Image.open(prefix.with_suffix('.png')) as original:
+                original.load()
+                deadline = time.monotonic() + 90
+                # Read likely title areas in every orientation before scanning notes.
+                regions = [(0.72,0.5,1,1),(0,0.82,1,1),(0.78,0,1,1),(0,0,1,1)]
+                for region in regions:
+                    for rotation in [0,90,270,180]:
+                        remaining = deadline-time.monotonic()
+                        if remaining < 1:
+                            return result('failed', error='Title recognition reached its processing budget. Review this page or retry OCR.')
+                        im = original.rotate(rotation,expand=True)
+                        x0,y0,x1,y1 = [round(region[i]*[im.width,im.height,im.width,im.height][i]) for i in range(4)]
+                        crop = im.crop((x0,y0,x1,y1))
+                        # Full sheets are only a last fallback; limit dense-note cost.
+                        if region == (0,0,1,1): crop.thumbnail((2400,2400))
+                        else: crop.thumbnail((2200,2200))
+                        image_path = Path(folder)/'crop.png';crop.save(image_path)
+                        attempts += 1
+                        try:
+                            raw = subprocess.run([os.getenv('TESSERACT_CMD','tesseract'),str(image_path),'stdout','-l','eng','--psm','11','tsv'],check=True,timeout=min(12,remaining),capture_output=True,text=True,env={**os.environ,'OMP_THREAD_LIMIT':'1'})
+                        except subprocess.TimeoutExpired:
+                            timeouts += 1
+                            continue
+                        lines = parse_tsv(raw.stdout,crop.width,crop.height)
+                        for line in lines:
+                            r=line['region']
+                            line['region']=[round((r[0]*(x1-x0)+x0)/im.width,5),round((r[1]*(y1-y0)+y0)/im.height,5),round((r[2]*(x1-x0)+x0)/im.width,5),round((r[3]*(y1-y0)+y0)/im.height,5)]
+                        if len(lines)>len(best): best,best_rotation=lines,rotation
+                        titles=title_lines(lines)
+                        if titles:
+                            best_rotation=rotation
+                            return result('complete',titles)
+                if timeouts:
+                    return result('failed',error='Some title-reading attempts timed out. Review this page or retry OCR; its drawing can still be included.')
+                return result('unreadable',error='No drawing title was recognized. View this page and include it or explicitly exclude it before processing.')
     except FileNotFoundError:
-        return dict(version=OCR_VERSION,engine='tesseract',status='failed',text='',lines=[],error='Title OCR is unavailable on the PDF worker. Install Tesseract and Poppler.')
-    except (subprocess.SubprocessError, OSError):
-        return dict(version=OCR_VERSION,engine='tesseract',status='failed',text='',lines=[],error='Title OCR timed out or could not read this sheet. Retry or select it manually.')
+        return result('failed',error='Title OCR is unavailable on the PDF worker. Install Tesseract and Poppler.')
+    except (subprocess.SubprocessError,OSError):
+        return result('failed',error='Could not render or read this title. View the drawing and include it or retry OCR.')

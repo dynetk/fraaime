@@ -1,4 +1,5 @@
 """Stateless PDF preparation. No AI, credentials, or customer files in the image."""
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -188,7 +189,11 @@ async def title_ocr(data: Input, authorization: str | None=Header(default=None))
         raise HTTPException(422,'Page is required')
     with tempfile.TemporaryDirectory(prefix='fraaime-ocr-') as folder:
         path=Path(folder)/'source.pdf'
-        await download(data,path)
+        # Leave room for rendering and OCR within the hosted request duration.
+        try:
+            await asyncio.wait_for(download(data,path),timeout=90)
+        except TimeoutError:
+            raise HTTPException(504,'Downloading this PDF for title recognition timed out. Retry indexing.')
         from starlette.concurrency import run_in_threadpool
         def prepare():
             pdf=reader(path,data.max_pages)

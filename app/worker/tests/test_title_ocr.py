@@ -37,3 +37,25 @@ def test_missing_engine_is_explicit(tmp_path,monkeypatch):
     result=ocr_file(tmp_path/'source.pdf',1)
     assert result['status']=='failed'
     assert 'unavailable' in result['error']
+
+def test_multiline_titles_do_not_join_unrelated_columns():
+    from title_ocr import title_lines
+    lines=[dict(text='ROOF FRAMING',confidence=95,region=[.8,.7,.95,.72]),dict(text='PLAN',confidence=90,region=[.8,.725,.9,.745])]
+    assert title_lines(lines)[0]['text']=='ROOF FRAMING PLAN'
+    lines[1]['region']=[.1,.725,.2,.745]
+    assert not title_lines(lines)
+
+def test_recognition_timeouts_remain_explicit(tmp_path,monkeypatch):
+    import subprocess
+    import title_ocr
+    real=title_ocr.subprocess.run
+    def run(args,**kwargs):
+        if args[0]=='pdftoppm':
+            Image.new('L',(1000,800),255).save(args[-1]+'.png')
+            return subprocess.CompletedProcess(args,0)
+        raise subprocess.TimeoutExpired(args,kwargs['timeout'])
+    monkeypatch.setattr(title_ocr.subprocess,'run',run)
+    result=title_ocr.ocr_file(tmp_path/'source.pdf',1)
+    assert result['status']=='failed'
+    assert result['timedOutAttempts']==result['attempts']==16
+    assert 'timed out' in result['error']

@@ -94,3 +94,23 @@ Timing fields are sums of page-operation seconds unless labeled wall time. Concu
 - Which failures deserve a later, separately authorized end-to-end AI/model evaluation.
 
 This benchmark cannot establish model dimensional accuracy, framing completeness, estimate accuracy, or paid model cost. Those require the separate workflow in [EVALUATION.md](EVALUATION.md).
+
+## Title recognition v2 and the review gate
+
+Version 2 reads smaller title-block and sheet-edge crops before a bounded low-resolution full-page fallback. It tests four orientations, joins adjacent multiline titles, and recognizes combined schedules/details and roof-framing titles. Rendering is limited to 60 seconds, recognition to 90 seconds total and 12 seconds per attempt. The OCR endpoint separately bounds PDF download to 90 seconds. Results record attempt count, timed-out attempts and duration; an unresolved timeout is still reported, not relabeled as success.
+
+New indexing uses v2. Retry indexing upgrades old failed/unreadable title results, while retaining successful results and human review decisions. The app accepts v1 and v2 during staged deployment. The PDF worker must be redeployed as well as the web app.
+
+Every unclassified page must be selected for evidence or explicitly excluded before a fresh extraction starts. An exclusion requires a reason, is saved against the immutable plan revision, and records reviewer/time in the audit trail. Included unclassified pages remain selectable even when title reading fails. Review decisions survive reload and OCR retries; **Reopen review** makes an excluded page pending again. Both the UI and the authenticated server enforce the gate. Existing extraction checkpoints retain their original sheets when resumed; changing sheets requires a new draft.
+
+Run a title-only comparison without paid AI calls:
+
+```sh
+worker/.venv/bin/python scripts/benchmark-ocr.py --cases /private/cases.json \
+  --out /private/title-v2 --workers 3 --title-only \
+  --native-cache /private/baseline/native.json
+node --import tsx scripts/compare-title-ocr.ts /private/baseline \
+  /private/title-v2 /private/reference.json
+```
+
+Cached native manifests require matching source hashes. Reports reject mixed OCR fingerprints and compare both runs through the same current sheet selector, isolating OCR changes from the earlier sheet-limit change. Counts cover completed, unreadable and failed title reads, selected reference sheets, wrong classifications and remaining manual review. Full-page OCR and model geometry are outside this title-only test. Local CPU timings do not establish hosted latency or accuracy.

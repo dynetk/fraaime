@@ -21,6 +21,7 @@ import {
 } from "@/lib/worker";
 import { MAX_SHELL_PAGES } from "@/lib/shell-provider";
 import { pricing } from "@/lib/extraction";
+import { requireSheetReview, saveSheetReview } from "@/lib/sheet-review";
 import { processPlan } from "@/workflows/process-plan";
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -310,6 +311,10 @@ const handler = route(async (r) => {
       user,
       r.method === "GET" ? "read" : "edit",
     );
+    if (action === "review" && r.method === "POST")
+      return Response.json(
+        await saveSheetReview(db, id, user.email, await json(r)),
+      );
     if (action === "source" && r.method === "GET")
       return readSource(plan.storage_key);
     if (action === "page" && r.method === "GET") {
@@ -461,6 +466,42 @@ const handler = route(async (r) => {
       action === "new" ||
       action === "index"
     ) {
+      const b = z
+        .object({
+          pages: z
+            .array(z.number().int().positive())
+            .max(limit("MAX_AI_PAGES", 30))
+            .optional(),
+        })
+        .parse(await json(r));
+      const plan = await db.query<{ manifest: Manifest | null }>(
+        "SELECT manifest FROM plans WHERE id=$1",
+        [j.plan_id],
+      );
+      const manifest = plan.rows[0]?.manifest;
+      const existingCalls = (
+        await db.query("SELECT id FROM ai_calls WHERE job_id=$1 LIMIT 1", [
+          j.id,
+        ])
+      ).rows.length;
+      const fresh =
+        action === "new" || j.state === "needs_review" || !existingCalls;
+      if (
+        action !== "index" &&
+        manifest &&
+        manifest.indexingComplete !== false
+      ) {
+        if (fresh) requireSheetReview(manifest, b.pages ?? j.pages);
+        else if (
+          b.pages &&
+          JSON.stringify([...b.pages].sort((a, b) => a - b)) !==
+            JSON.stringify([...j.pages].sort((a, b) => a - b))
+        )
+          throw new HttpError(
+            409,
+            "Existing extraction checkpoints use the original sheets. Start a new draft to change selection.",
+          );
+      }
       if (
         j.state === "needs_review" ||
         action === "new" ||
@@ -494,18 +535,6 @@ const handler = route(async (r) => {
       const targetId = j.id;
       if (!terminal.includes(j.state))
         throw new HttpError(409, "Job is already running");
-      const b = z
-        .object({
-          pages: z
-            .array(z.number().int().positive())
-            .max(limit("MAX_AI_PAGES", 30))
-            .optional(),
-        })
-        .parse(await json(r));
-      const plan = await db.query<{ manifest: Manifest | null }>(
-        "SELECT manifest FROM plans WHERE id=$1",
-        [j.plan_id],
-      );
       const mode =
         action === "index" ||
         !plan.rows[0].manifest ||
@@ -538,6 +567,17 @@ const handler = route(async (r) => {
         );
       await db.transaction(async (tx) => {
         await tx.query("SELECT id FROM spend_lock WHERE id=1 FOR UPDATE");
+        if (mode === "extract" && fresh) {
+          const latest = (
+            await tx.query<{ manifest: Manifest }>(
+              "SELECT manifest FROM plans WHERE id=$1 FOR UPDATE",
+              [j.plan_id],
+            )
+          ).rows[0].manifest;
+          if (latest.indexingComplete === false)
+            throw new HttpError(409, "Wait for title indexing to finish.");
+          requireSheetReview(latest, pages);
+        }
         const active = await tx.query<{ count: string }>(
           "SELECT COUNT(*) AS count FROM jobs WHERE state IN ('preparing','extracting')",
         );

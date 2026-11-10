@@ -1,7 +1,7 @@
 import { required, limit } from "./config";
 import { z } from "zod";
 export const TitleOcrSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   engine: z.literal("tesseract"),
   status: z.enum(["complete", "unreadable", "failed"]),
   text: z.string().max(24000),
@@ -15,6 +15,9 @@ export const TitleOcrSchema = z.object({
       }),
     )
     .max(1200),
+  attempts: z.number().int().nonnegative().optional(),
+  timedOutAttempts: z.number().int().nonnegative().optional(),
+  durationMs: z.number().nonnegative().optional(),
   error: z.string().max(500).optional(),
 });
 export type TitleOcr = z.infer<typeof TitleOcrSchema>;
@@ -30,6 +33,12 @@ export interface Sheet {
   revision: string;
   scanned: boolean;
   ocr?: TitleOcr;
+  review?: {
+    decision: "include" | "exclude";
+    reason: string;
+    by: string;
+    at: string;
+  };
 }
 export interface Manifest {
   indexingVersion?: 1;

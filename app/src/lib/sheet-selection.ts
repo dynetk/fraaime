@@ -61,7 +61,11 @@ function titleKind(rawText: string): string {
       )
     )
       kind = "floor-plan";
-    else if (/^(?:door|window|door\s*&\s*window)\s+schedules?$/i.test(line)) {
+    else if (
+      /^(?:(?:door|window|door\s*&\s*window)\s+)?schedules?(?:\s*&\s*details)?$/i.test(
+        line,
+      )
+    ) {
       if (kind === "unclassified") kind = "schedule";
     } else if (/^roof(?:\s+deck)?\s+plans?$/i.test(line)) kind = "roof-plan";
     else if (/^(?:exterior\s+|building\s+)?elevations?$/i.test(line))
@@ -107,10 +111,12 @@ export function sheetKind(sheet: Pick<Sheet, "text" | "kind" | "ocr">): string {
 export function needsTitleOcr(
   sheet: Pick<Sheet, "text" | "kind" | "ocr">,
 ): boolean {
-  if (sheet.ocr && sheet.ocr.status !== "failed") return false;
+  if (sheet.ocr?.status === "complete") return false;
+  if (sheet.ocr?.version === 2 && sheet.ocr.status === "unreadable")
+    return false;
   if (titleKind(sheet.text ?? "") !== "unclassified") return false;
   // Readable non-shell titles need no OCR. Boilerplate alone does not count.
-  return !sheet.text
+  return !(sheet.text ?? "")
     .split(/\r?\n/)
     .some((line) =>
       /^(?:sheet index|drawing index|index of drawings|drawing list|general notes|(?:site|electrical|power|lighting|foundation|framing|landscape) plans?(?: notes)?|interior elevations?|wall sections?|.* details)$/i.test(
@@ -128,11 +134,20 @@ export function suggestedPlanPages(
   // Keep all of them even over the limit so the UI can require an explicit choice.
   const core = ["floor-plan", "roof-plan", "elevation", "section", "schedule"];
   const selected = new Set(
-    sheets.filter((s) => core.includes(sheetKind(s))).map((s) => s.page),
+    sheets
+      .filter(
+        (s) =>
+          s.review?.decision !== "exclude" &&
+          (core.includes(sheetKind(s)) || s.review?.decision === "include"),
+      )
+      .map((s) => s.page),
   );
   for (const sheet of sheets) {
     if (selected.size >= maxPages) break;
-    if (["roof-framing", "support"].includes(sheetKind(sheet)))
+    if (
+      sheet.review?.decision !== "exclude" &&
+      ["roof-framing", "support"].includes(sheetKind(sheet))
+    )
       selected.add(sheet.page);
   }
   return [...selected].sort((a, b) => a - b);
@@ -146,7 +161,19 @@ export function selectedPlanPages(
   maxPages = MAX_SHELL_PAGES,
 ): number[] {
   if (manual !== undefined) return manual;
-  if (previousPages.length) return previousPages;
+  if (previousPages.length)
+    return [
+      ...new Set([
+        ...previousPages.filter(
+          (p) =>
+            manifest?.sheets.find((s) => s.page === p)?.review?.decision !==
+            "exclude",
+        ),
+        ...(manifest?.sheets
+          .filter((s) => s.review?.decision === "include")
+          .map((s) => s.page) ?? []),
+      ]),
+    ].sort((a, b) => a - b);
   return suggestedPlanPages(manifest, maxPages);
 }
 
@@ -168,4 +195,20 @@ export function selectionWarnings(manifest: Manifest | null, pages: number[]) {
         `Recognized drawings are not selected: ${missing.map((s) => `${s.sheet || `PDF ${s.page}`} (page ${s.page}, ${sheetKind(s)})`).join(", ")}. Use suggested sheets or review these omissions.`,
       ]
     : [];
+}
+
+export function needsSheetDecision(sheet: Sheet) {
+  return !SHELL_SHEET_KINDS.some((kind) => kind === sheetKind(sheet));
+}
+/** Unknown pages need an explicit disposition; selecting a page includes its evidence. */
+export function pendingSheetReview(
+  manifest: Manifest | null,
+  selected: number[],
+) {
+  return (manifest?.sheets ?? []).filter(
+    (s) =>
+      needsSheetDecision(s) &&
+      !selected.includes(s.page) &&
+      s.review?.decision !== "exclude",
+  );
 }
