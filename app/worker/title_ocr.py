@@ -107,7 +107,7 @@ def ocr_file(path: Path, page: int):
                             return result('complete',titles)
                 if timeouts:
                     return result('failed',error='Some title-reading attempts timed out. Review this page or retry OCR; its drawing can still be included.')
-                return result('unreadable',error='No drawing title was recognized. View this page and include it or explicitly exclude it before processing.')
+                return result('unreadable',error='No drawing title was recognized. This page is unselected by default; select it if it belongs in the model.')
     except FileNotFoundError:
         return result('failed',error='Title OCR is unavailable on the PDF worker. Install Tesseract and Poppler.')
     except (subprocess.SubprocessError,OSError):

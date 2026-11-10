@@ -2,20 +2,11 @@ import { z } from "zod";
 import { audit, now, type Database } from "./db";
 import { HttpError } from "./access";
 import type { Manifest } from "./worker";
-import { pendingSheetReview } from "./sheet-selection";
 export const SheetReviewInput = z.object({
   page: z.number().int().positive(),
   decision: z.enum(["include", "exclude", "reset"]),
   reason: z.string().trim().min(3).max(300),
 });
-export function requireSheetReview(manifest: Manifest, pages: number[]) {
-  const pending = pendingSheetReview(manifest, pages);
-  if (pending.length)
-    throw new HttpError(
-      409,
-      `Review ${pending.length} unclassified pages before generating: ${pending.map((s) => s.page).join(", ")}. Include each drawing or explicitly exclude it after viewing.`,
-    );
-}
 // Caller enforces project edit permission. Lock against concurrent OCR manifest updates.
 export async function saveSheetReview(
   db: Database,

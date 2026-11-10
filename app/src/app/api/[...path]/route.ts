@@ -21,7 +21,7 @@ import {
 } from "@/lib/worker";
 import { MAX_SHELL_PAGES } from "@/lib/shell-provider";
 import { pricing } from "@/lib/extraction";
-import { requireSheetReview, saveSheetReview } from "@/lib/sheet-review";
+import { saveSheetReview } from "@/lib/sheet-review";
 import { processPlan } from "@/workflows/process-plan";
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -491,8 +491,8 @@ const handler = route(async (r) => {
         manifest &&
         manifest.indexingComplete !== false
       ) {
-        if (fresh) requireSheetReview(manifest, b.pages ?? j.pages);
-        else if (
+        if (
+          !fresh &&
           b.pages &&
           JSON.stringify([...b.pages].sort((a, b) => a - b)) !==
             JSON.stringify([...j.pages].sort((a, b) => a - b))
@@ -576,7 +576,6 @@ const handler = route(async (r) => {
           ).rows[0].manifest;
           if (latest.indexingComplete === false)
             throw new HttpError(409, "Wait for title indexing to finish.");
-          requireSheetReview(latest, pages);
         }
         const active = await tx.query<{ count: string }>(
           "SELECT COUNT(*) AS count FROM jobs WHERE state IN ('preparing','extracting')",

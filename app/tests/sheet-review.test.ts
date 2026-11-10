@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openLocal, uid, now } from "../src/lib/db";
-import { saveSheetReview, requireSheetReview } from "../src/lib/sheet-review";
+import { saveSheetReview } from "../src/lib/sheet-review";
 import {
   selectedPlanPages,
-  pendingSheetReview,
+  optionalSheetPages,
   needsTitleOcr,
 } from "../src/lib/sheet-selection";
 import type { Manifest } from "../src/lib/worker";
@@ -25,7 +25,7 @@ const manifest = (): Manifest => ({
     scanned: false,
   })),
 });
-test("unclassified pages require inclusion or saved explicit exclusion; OCR failures cannot disappear", async () => {
+test("unclassified pages default to unselected; optional selections persist", async () => {
   const db = await openLocal(),
     project = uid(),
     plan = uid();
@@ -45,18 +45,15 @@ test("unclassified pages require inclusion or saved explicit exclusion; OCR fail
           [plan],
         )
       ).rows[0].manifest;
-    assert.throws(
-      () => requireSheetReview(manifest(), [1, 2]),
-      /Review 1 unclassified/,
-    );
-    assert.doesNotThrow(() => requireSheetReview(manifest(), [1, 2, 3]));
+    assert.deepEqual(selectedPlanPages(manifest(), undefined), [1, 2]);
+    assert.equal(optionalSheetPages(manifest(), [1, 2]).length, 1);
     await saveSheetReview(db, plan, "owner", {
       page: 3,
       decision: "exclude",
       reason: "Reviewed source: general notes only",
     });
     let m = await read();
-    assert.equal(pendingSheetReview(m, [1, 2]).length, 0);
+    assert.equal(optionalSheetPages(m, [1, 2]).length, 1);
     assert.equal(m.sheets[2].review?.by, "owner");
     // A later OCR update must not undo an explicit decision.
     m.sheets[2].text = "ROOF PLAN";
@@ -74,7 +71,7 @@ test("unclassified pages require inclusion or saved explicit exclusion; OCR fail
       reason: "Check again",
     });
     m = await read();
-    assert.throws(() => requireSheetReview(m, [1, 2]));
+    assert.deepEqual(selectedPlanPages(m, undefined), [1, 2]);
     await assert.rejects(
       saveSheetReview(db, plan, "owner", {
         page: 4,
@@ -126,7 +123,7 @@ test("old unreadable OCR gets one upgraded attempt; current unreadable results s
   sheet.ocr.version = 2;
   assert.equal(needsTitleOcr(sheet), false);
   assert.equal(
-    pendingSheetReview({ ...manifest(), sheets: [sheet] }, []).length,
+    optionalSheetPages({ ...manifest(), sheets: [sheet] }, []).length,
     1,
   );
 });
