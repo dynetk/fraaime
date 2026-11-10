@@ -129,3 +129,5 @@ An opt-in joint-sheet extraction path combines floor plans, sections, elevations
 ## Unclassified drawing review
 
 Suggested sheets can be processed immediately after indexing finishes. Unclassified pages stay unselected by default and never block generation. Use **Show unselected unclassified pages** to browse optional evidence and select any additional drawings; checking or unchecking an unclassified page saves that choice without a reason prompt. Earlier saved exclusions remain respected. Retry **Read unreadable titles (OCR)** on older uploads to use the v2 title reader, then choose **Use suggested sheets**. Existing model revisions are preserved. See [OCR-EVALUATION.md](OCR-EVALUATION.md) for time limits, test procedure and limitations.
+
+Each PDF shows one latest processing panel. Earlier attempts remain in a collapsed **Processing history** with timestamps, status, progress, cost and errors. Historical attempts cannot start another extraction. If an earlier attempt is still running, history opens to expose its cancel control and the latest run waits for it to finish.

@@ -3,6 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useDialog } from "./useDialog";
 import Brand from "./Brand";
+import PlanProcessing from "./PlanProcessing";
+import {
+  processingAttempts,
+  type ProcessingJob as Job,
+} from "@/lib/processing-jobs";
 import EstimatePanel from "./EstimatePanel";
 import { MOCK_ESTIMATE_SETTINGS } from "@/lib/estimate-settings";
 import {
@@ -48,16 +53,6 @@ async function api<T = any>(
   return b;
 }
 type Project = { id: string; name: string; head_id: string | null };
-type Job = {
-  id: string;
-  plan_id: string;
-  state: string;
-  phase: string;
-  error: string | null;
-  pages: number[];
-  completed_pages: number[];
-  spend: string;
-};
 type Detail = {
   project: Project;
   plans: {
@@ -129,7 +124,7 @@ export default function Studio() {
       selectedPlanPages(
         plan.manifest,
         pageSelections[plan.id],
-        detail?.jobs.find((job) => job.plan_id === plan.id)?.pages,
+        processingAttempts(detail?.jobs ?? [], plan.id)[0]?.pages,
         session?.shellFusion ? MAX_SHELL_PAGES : 30,
       ),
     ]),
@@ -1165,87 +1160,39 @@ export default function Studio() {
                           Open PDF ↗
                         </a>
                       </div>
-                      {detail.jobs
-                        .filter((j) => j.plan_id === plan.id)
-                        .map((j) => (
-                          <div className="job" key={j.id}>
-                            <div>
-                              <b>{j.phase}</b>
-                              <span className="badge">
-                                {j.state.replaceAll("_", " ")}
-                              </span>
-                              <span>
-                                {" "}
-                                {j.completed_pages.length} pages completed · $
-                                {Number(j.spend).toFixed(3)} accounted /
-                                reserved
-                              </span>
-                            </div>
-                            {j.error && <p className="error-text">{j.error}</p>}
-                            {j.state === "failed" && (
-                              <button
-                                disabled={
-                                  busy ||
-                                  plan.manifest?.indexingComplete === false
-                                }
-                                onClick={async () => {
-                                  if (
-                                    await confirm(
-                                      "Start a separate extraction? Completed or uncertain API calls may be charged again.",
-                                    )
-                                  )
-                                    run(async () => {
-                                      await api(`jobs/${j.id}/new`, "POST", {
-                                        pages: selections[plan.id] ?? j.pages,
-                                      });
-                                      await refresh();
-                                    });
-                                }}
-                              >
-                                Start separate extraction
-                              </button>
-                            )}
-                            {["preparing", "extracting"].includes(j.state) ? (
-                              <button
-                                onClick={() =>
-                                  run(async () => {
-                                    await api(
-                                      `jobs/${j.id}/cancel`,
-                                      "POST",
-                                      {},
-                                    );
-                                    await refresh();
-                                  })
-                                }
-                              >
-                                Cancel
-                              </button>
-                            ) : (
-                              <button
-                                disabled={
-                                  busy ||
-                                  ((j.state === "needs_review" ||
-                                    j.state === "needs_selection") &&
-                                    plan.manifest?.indexingComplete === false)
-                                }
-                                onClick={() =>
-                                  run(async () => {
-                                    await api(`jobs/${j.id}/run`, "POST", {
-                                      pages: selections[plan.id] ?? j.pages,
-                                    });
-                                    await refresh();
-                                  })
-                                }
-                              >
-                                {j.state === "needs_selection"
-                                  ? "Process selected sheets"
-                                  : j.state === "needs_review"
-                                    ? "Create new AI draft"
-                                    : "Resume processing"}
-                              </button>
-                            )}
-                          </div>
-                        ))}
+                      <PlanProcessing
+                        jobs={detail.jobs}
+                        planId={plan.id}
+                        busy={busy}
+                        indexing={plan.manifest?.indexingComplete === false}
+                        onRun={(job) =>
+                          run(async () => {
+                            await api(`jobs/${job.id}/run`, "POST", {
+                              pages: selections[plan.id] ?? job.pages,
+                            });
+                            await refresh();
+                          })
+                        }
+                        onNew={async (job) => {
+                          if (
+                            await confirm(
+                              "Start a separate extraction? Completed or uncertain API calls may be charged again.",
+                            )
+                          )
+                            run(async () => {
+                              await api(`jobs/${job.id}/new`, "POST", {
+                                pages: selections[plan.id] ?? job.pages,
+                              });
+                              await refresh();
+                            });
+                        }}
+                        onCancel={(job) =>
+                          run(async () => {
+                            await api(`jobs/${job.id}/cancel`, "POST", {});
+                            await refresh();
+                          })
+                        }
+                      />
                       {!detail.jobs.some((j) => j.plan_id === plan.id) && (
                         <button
                           onClick={() =>
