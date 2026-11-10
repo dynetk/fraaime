@@ -8,6 +8,8 @@ export type ShellResult = {
   draft: ShellDraftData;
   sourcePages: number[];
   detailRequested?: boolean;
+  openingsRequested?: boolean;
+  openingsComplete?: boolean;
   detailDraft?: ShellDetailData;
 };
 export type StoredResult = {
@@ -32,15 +34,20 @@ export function assembleStoredResults(
       allPages.filter((n) => !rows.some((r) => r.page === n)),
     );
   const detailed = rows.find((r) => r.page === -1);
+  const opened = rows.find((r) => r.page === -2);
   if (
-    rows.length !== (detailed ? 2 : 1) ||
+    rows.length !== 1 + (detailed ? 1 : 0) + (opened ? 1 : 0) ||
+    (opened &&
+      (!detailed ||
+        opened.result.kind !== "project-shell" ||
+        !opened.result.openingsComplete)) ||
     joint.result.kind !== "project-shell" ||
     (detailed &&
       (detailed.result.kind !== "project-shell" ||
         !detailed.result.detailDraft))
   )
     throw Error("Mixed or invalid extraction checkpoints; start a fresh job.");
-  const model = ModelSchema.parse((detailed ?? joint).result.model);
+  const model = ModelSchema.parse((opened ?? detailed ?? joint).result.model);
   const sourcePages = joint.result.sourcePages;
   const skipped = allPages.filter((n) => !sourcePages.includes(n));
   if (skipped.length)
@@ -49,6 +56,44 @@ export function assembleStoredResults(
       elementId: null,
       severity: "warning",
       message: `Only selected sheets were reconciled. ${skipped.length} other sheets remain unread: ${skipped.join(", ")}.`,
+      resolved: false,
+      resolution: "",
+    });
+  const hasTags = (model.scheduleEntries?.length ?? 0) > 0;
+  if (hasTags && !model.openings.length)
+    model.issues.push({
+      id: "coverage-no-openings",
+      elementId: null,
+      severity: "error",
+      message:
+        "Opening tags/schedules were found but no openings were placed. This framing model is incomplete; review schedules and wall matching before estimating.",
+      resolved: false,
+      resolution: "",
+    });
+  const unmatched = (model.scheduleEntries ?? []).filter((entry) => {
+    const count = model.openings.filter(
+      (o) =>
+        o.kind === entry.kind &&
+        o.tag.trim().toUpperCase() === entry.tag.trim().toUpperCase(),
+    ).length;
+    return count < (entry.quantity ?? 1);
+  });
+  if (unmatched.length && model.openings.length)
+    model.issues.push({
+      id: "coverage-unmatched-openings",
+      elementId: null,
+      severity: "warning",
+      message: `Schedule entries remain unmatched or under-counted: ${unmatched.map((e) => e.tag).join(", ")}. Check repeated types and intentionally unplaced gates before estimating.`,
+      resolved: false,
+      resolution: "",
+    });
+  if (joint.result.openingsRequested && !opened)
+    model.issues.push({
+      id: "coverage-opening-stage",
+      elementId: null,
+      severity: "error",
+      message:
+        "Focused opening reconciliation did not complete. This is a partial model.",
       resolved: false,
       resolution: "",
     });

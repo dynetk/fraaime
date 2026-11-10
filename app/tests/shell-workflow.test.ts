@@ -125,7 +125,8 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
       issues: [],
     };
     let detailValid = true,
-      interruptDetail = false;
+      interruptDetail = false,
+      interruptOpenings = false;
     const detailDraft = {
       version: 1,
       wallTypes: [
@@ -153,7 +154,9 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     };
     globalThis.fetch = async (url, init) => {
       const request = JSON.parse(init!.body as string);
-      const isDetail = request.text.format.name === "shell_details";
+      const isDetail = ["shell_details", "shell_openings"].includes(
+        request.text.format.name,
+      );
       assert.equal(request.model, "gpt-6.1-sol");
       assert.equal(request.reasoning.effort, "medium");
       if (isDetail)
@@ -217,7 +220,11 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
           },
         ];
         return new Response(
-          (interruptDetail ? events.slice(0, 1) : events)
+          (interruptDetail ||
+          (interruptOpenings && request.text.format.name === "shell_openings")
+            ? events.slice(0, 1)
+            : events
+          )
             .map((e) => `data: ${JSON.stringify(e)}\n\n`)
             .join(""),
           { headers: { "content-type": "text/event-stream" } },
@@ -326,14 +333,14 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     );
     const detailed = await job();
     await processPlan(detailed, "extract");
-    assert.equal(calls, 5);
+    assert.equal(calls, 6);
     const checkpoints = await db.query<any>(
       "SELECT page,state,result FROM ai_calls WHERE job_id=$1 ORDER BY page",
       [detailed],
     );
     assert.deepEqual(
       checkpoints.rows.map((r) => r.page),
-      [-1, 0],
+      [-2, -1, 0],
     );
     assert.equal(
       checkpoints.rows[0].result.model.walls.filter(
@@ -351,7 +358,7 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     );
     process.env.FRAAIME_SHELL_DETAILS = "0";
     await processPlan(detailed, "extract");
-    assert.equal(calls, 5);
+    assert.equal(calls, 6);
     assert.equal(
       (await db.query("SELECT id FROM revisions WHERE job_id=$1", [detailed]))
         .rows.length,
@@ -361,7 +368,7 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     detailValid = false;
     const broken = await job();
     await processPlan(broken, "extract");
-    assert.equal(calls, 7);
+    assert.equal(calls, 8);
     const partial = await db.query<any>(
       "SELECT model FROM revisions WHERE job_id=$1",
       [broken],
@@ -373,14 +380,14 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     await processPlan(broken, "extract");
     assert.equal(
       calls,
-      7,
+      8,
       "failed detail call is never billed automatically again",
     );
     const limitedDetail = await job(0.28);
     await processPlan(limitedDetail, "extract");
     assert.equal(
       calls,
-      8,
+      9,
       "budget permits base call but blocks detail reservation",
     );
     assert.equal(
@@ -395,7 +402,7 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     interruptDetail = true;
     const interrupted = await job();
     await processPlan(interrupted, "extract");
-    assert.equal(calls, 10);
+    assert.equal(calls, 11);
     const interruptedCall = (
       await db.query<any>(
         "SELECT state,cost_usd,response_id FROM ai_calls WHERE job_id=$1 AND page=-1",
@@ -404,9 +411,32 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     ).rows[0];
     assert.equal(interruptedCall.state, "uncertain");
     assert.equal(interruptedCall.cost_usd, null);
-    assert.equal(interruptedCall.response_id, "resp-10");
+    assert.equal(interruptedCall.response_id, "resp-11");
     await processPlan(interrupted, "extract");
-    assert.equal(calls, 10);
+    assert.equal(calls, 11);
+    interruptDetail = false;
+    interruptOpenings = true;
+    const openingInterrupted = await job();
+    await processPlan(openingInterrupted, "extract");
+    assert.equal(calls, 14);
+    const openingPartial = (
+      await db.query<any>("SELECT model FROM revisions WHERE job_id=$1", [
+        openingInterrupted,
+      ])
+    ).rows[0].model;
+    assert.equal(
+      openingPartial.walls.filter((w: any) => w.role === "interior").length,
+      1,
+    );
+    assert(
+      openingPartial.issues.some((i: any) => i.id === "coverage-opening-stage"),
+    );
+    await processPlan(openingInterrupted, "extract");
+    assert.equal(
+      calls,
+      14,
+      "uncertain opening calls are not billed again on retry",
+    );
   } finally {
     process.chdir(cwd);
     globalThis.fetch = oldFetch;

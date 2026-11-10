@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ModelSchema, type BuildingModel, type Evidence } from "./model";
+import {
+  ModelSchema,
+  minimumWallTop,
+  type BuildingModel,
+  type Evidence,
+} from "./model";
 import {
   inside,
   simplePolygon,
@@ -76,7 +81,47 @@ export const ShellDetailDraft = z.object({
       }),
     )
     .max(80),
+  exteriorWalls: z
+    .array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        levelId: z.string(),
+        typeId: z.string(),
+        start: point,
+        end: point,
+        height: dimension,
+        evidence: z.array(source).min(1).max(8),
+      }),
+    )
+    .max(100)
+    .default([]),
+  wallTops: z
+    .array(
+      z.object({
+        wallId: z.string(),
+        profile: z
+          .array(
+            z.object({ fraction: z.number().min(0).max(1), height: dimension }),
+          )
+          .min(2)
+          .max(20),
+        evidence: z.array(source).min(1).max(8),
+      }),
+    )
+    .max(400)
+    .default([]),
   issues: z.array(z.object({ id: z.string(), message: z.string() })).max(100),
+});
+// Strict API schema requires new fields; stored v1 checkpoints can omit them.
+export const DetailResponseSchema = ShellDetailDraft.extend({
+  exteriorWalls: ShellDetailDraft.shape.exteriorWalls.removeDefault(),
+  wallTops: ShellDetailDraft.shape.wallTops.removeDefault(),
+});
+export const OpeningResponseSchema = ShellDetailDraft.pick({
+  version: true,
+  openings: true,
+  issues: true,
 });
 export type ShellDetailData = z.infer<typeof ShellDetailDraft>;
 type P = number[];
@@ -215,6 +260,7 @@ export function compileShellDetail(
   baseDraft: ShellDraftData,
   pages: PageEvidence[],
   planId: string,
+  openingStage = false,
 ) {
   const m = ModelSchema.parse(base),
     available = new Map(pages.map((p) => [p.page, p]));
@@ -242,7 +288,7 @@ export function compileShellDetail(
     severity: "warning" | "error" = "warning",
   ) =>
     m.issues.push({
-      id: `detail-review-${serial++}`,
+      id: `${openingStage ? "opening" : "detail"}-review-${serial++}`,
       elementId,
       severity,
       message,
@@ -395,6 +441,110 @@ export function compileShellDetail(
         parts[0].id,
       );
   }
+  // Garden/screen walls do not define occupied floor area and must not be
+  // rejected by the interior partition containment check.
+  for (const p of draft.exteriorWalls) {
+    const l = m.levels.find((l) => l.id === p.levelId),
+      t = transforms.get(p.levelId);
+    const sourceLevel = baseDraft.levels.find((l) => l.id === p.levelId);
+    const type = draft.wallTypes.find((w) => w.id === p.typeId);
+    const height = dim(p.height),
+      thickness = type ? dim(type.thickness) : null;
+    const evidence = ev([
+      ...p.evidence,
+      ...p.height.evidence,
+      ...(type?.thickness.evidence ?? []),
+    ]);
+    if (
+      !l ||
+      !t ||
+      !sourceLevel ||
+      !ev(p.evidence).some((e) => e.page === sourceLevel.planPage) ||
+      !ev(p.height.evidence).some((e) => e.page !== sourceLevel.planPage) ||
+      height === null ||
+      height < 500 ||
+      height > 10000 ||
+      thickness === null ||
+      thickness < 50 ||
+      thickness > 1000 ||
+      used.has(id(p.id))
+    ) {
+      reject(
+        p,
+        "exterior-wall",
+        "Exterior enclosure needs calibrated plan placement and a supported vertical height.",
+      );
+      continue;
+    }
+    const a = t(p.start),
+      b = t(p.end);
+    if (
+      distance(a, b) < 100 ||
+      m.walls.some(
+        (w) => w.levelId === l.id && overlapsWall(a, b, w.start, w.end),
+      )
+    ) {
+      reject(p, "exterior-wall", "Invalid or overlapping exterior enclosure.");
+      continue;
+    }
+    const wall = {
+      id: id(p.id),
+      label: p.label,
+      levelId: l.id,
+      start: a,
+      end: b,
+      height,
+      thickness,
+      evidence,
+      inferred: true,
+      role: "courtyard" as const,
+    };
+    m.walls.push(wall);
+    used.add(wall.id);
+    partitionWalls.set(p.id, [wall]);
+  }
+  for (const top of draft.wallTops) {
+    const wall = m.walls.find(
+      (w) => w.id === top.wallId || w.id === id(top.wallId),
+    );
+    const values = top.profile.map((p) => [p.fraction, dim(p.height)]);
+    if (
+      !wall ||
+      !ev(top.evidence).length ||
+      values[0][0] !== 0 ||
+      values.at(-1)![0] !== 1 ||
+      values.some(
+        (p, i) =>
+          p[1] === null ||
+          p[1]! < 500 ||
+          p[1]! > 10000 ||
+          (i > 0 && p[0]! <= values[i - 1][0]!),
+      ) ||
+      top.profile.some(
+        (p) =>
+          !ev(p.height.evidence).some((e) =>
+            baseDraft.sheets.some(
+              (s) =>
+                s.page === e.page && ["section", "elevation"].includes(s.kind),
+            ),
+          ),
+      )
+    ) {
+      issue(
+        "Wall-top profile omitted: needs ordered endpoints and section/elevation evidence.",
+        wall?.id ?? null,
+      );
+      continue;
+    }
+    wall.topProfile = values as [number, number][];
+    wall.height = Math.max(...values.map((p) => p[1]!));
+    wall.evidence.push(
+      ...ev([
+        ...top.evidence,
+        ...top.profile.flatMap((p) => p.height.evidence),
+      ]),
+    );
+  }
   for (const o of draft.openings) {
     const width = dim(o.width),
       height = dim(o.height),
@@ -447,6 +597,7 @@ export function compileShellDetail(
       offset = distance(w.start, projected) - width / 2;
     if (
       distance(c, projected) > Math.max(150, w.thickness) ||
+      sill + height > minimumWallTop(w, offset, offset + width) + 1 ||
       width > length ||
       offset < -25 ||
       offset + width > length + 25 ||
@@ -581,13 +732,42 @@ export function compileShellDetail(
   if (roofs.length) {
     const before = roofCoverage(m),
       candidate = { ...m, roofs };
-    if (roofCoverage(candidate) + 0.02 >= before) m.roofs = roofs;
-    else
+    if (roofCoverage(candidate) + 0.02 >= before) {
+      m.roofs = roofs;
+      const baseIds = new Set(base.issues.map((i) => i.id));
+      m.issues = m.issues.map((i) =>
+        baseIds.has(i.id) &&
+        /roof|deck/i.test(i.message) &&
+        /omitted|incomplete|only|unresolved/i.test(i.message)
+          ? {
+              ...i,
+              severity: "warning" as const,
+              message:
+                "Earlier shell-stage observation (roof set has since been replaced; review current surfaces): " +
+                i.message,
+            }
+          : i,
+      );
+      m.unresolvedObservations = m.unresolvedObservations.map((o) =>
+        o.kind === "roof"
+          ? {
+              ...o,
+              reason:
+                "Earlier shell-stage roof proposal, superseded by the current roof set. Original reason: " +
+                o.reason,
+            }
+          : o,
+      );
+    } else
       issue(
         "New roof set would reduce existing projected coverage. Original roofs retained; inspect the detailed roof observations before replacement.",
         null,
         "error",
       );
+  }
+  if (openingStage) {
+    for (const i of draft.issues) issue(i.message);
+    return ModelSchema.parse(m);
   }
   const coverage = roofCoverage(m);
   m.detailProvenance = {

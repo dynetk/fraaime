@@ -22,7 +22,7 @@ function manifest(kinds: string[]): Manifest {
   };
 }
 
-test("all four shell drawing types become selected when indexing finishes, excluding schedules and unknown sheets", () => {
+test("all four shell drawing types become selected when indexing finishes, including schedules and excluding unknown sheets", () => {
   assert.deepEqual(selectedPlanPages(null, undefined), []);
   assert.deepEqual(
     selectedPlanPages(
@@ -39,7 +39,7 @@ test("all four shell drawing types become selected when indexing finishes, exclu
       ]),
       undefined,
     ),
-    [2, 3, 4, 5, 6, 8, 9],
+    [2, 3, 4, 5, 6, 7, 8, 9],
   );
 });
 
@@ -68,7 +68,7 @@ test("unknown or scanned sheets are not guessed and large floor sets are not sil
   );
 });
 
-test("large sets retain every floor and balance support types within the shell limit", () => {
+test("all primary sheets are retained without the old eight-sheet truncation", () => {
   const sheets = manifest([
     "floor-plan",
     "floor-plan",
@@ -84,7 +84,7 @@ test("large sets retain every floor and balance support types within the shell l
   ]);
   assert.deepEqual(
     selectedPlanPages(sheets, undefined),
-    [1, 2, 3, 4, 5, 6, 8, 10],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
   );
   assert.equal(selectedPlanPages(sheets, undefined, [], 30).length, 11);
 });
@@ -141,4 +141,39 @@ test("sheet indexes, notes, electrical sheets, and unreadable titles are not she
   ]) {
     assert.equal(sheetKind({ kind: "floor-plan", text }), "unclassified");
   }
+});
+
+test("Wald-like nine architectural sheets plus schedules survive selection; obsolete/interior sheets do not", () => {
+  const m = manifest([
+    "floor-plan",
+    "roof-plan",
+    "roof-plan",
+    "elevation",
+    "elevation",
+    "elevation",
+    "section",
+    "section",
+    "section",
+    "schedule",
+    "schedule",
+    "elevation",
+    "section",
+  ]);
+  m.sheets[11].text = "INTERIOR\nELEVATIONS";
+  m.sheets[12].text = "SECTIONS\nNOT USED";
+  assert.deepEqual(
+    selectedPlanPages(m, undefined),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  );
+  assert.equal(
+    sheetKind({ ...m.sheets[0], text: "ROOF\nFRAMING\nPLAN" }),
+    "roof-framing",
+  );
+  assert.equal(
+    sheetKind({
+      ...m.sheets[0],
+      text: "SHEET INDEX\nCOVER SHEET\nWINDOW SCHEDULE",
+    }),
+    "support",
+  );
 });

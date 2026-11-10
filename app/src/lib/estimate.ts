@@ -1,3 +1,4 @@
+import { wallArea as profiledWallArea } from "./model";
 import { length, type BuildingModel } from "./model";
 import { wallFraming, polygonFraming, roofHeight } from "./framing";
 import {
@@ -103,11 +104,11 @@ export function buildEstimate(
           return c && c.kind !== "box";
         })
       )
-        wallArea += (length(wall) * wall.height) / SF;
+        wallArea += profiledWallArea(wall) / SF;
       continue;
     }
     const pieces = wallFraming(wall, model.openings, settings.spacingMm);
-    if (pieces.length) wallArea += (length(wall) * wall.height) / SF;
+    if (pieces.length) wallArea += profiledWallArea(wall) / SF;
     for (const p of pieces)
       add(
         wall.id,

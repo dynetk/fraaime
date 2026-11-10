@@ -296,3 +296,64 @@ test("partial duplicate runs are clipped without losing new interior segments or
   d2.openings[0].center = [0.75, 0.3];
   assert.equal(compile(d2).openings[0].wallId, "detail-p-segment-2");
 });
+
+test("garden enclosure outside floor remains an editable wall without creating floor area, and can host a door", () => {
+  const d = details();
+  d.exteriorWalls = [
+    {
+      id: "garden",
+      label: "Garden screen",
+      levelId: "L1",
+      typeId: "w",
+      start: [0.1, 0.95],
+      end: [0.9, 0.95],
+      height: dim(2400),
+      evidence: [ev()],
+    },
+  ];
+  d.openings = [{ ...d.openings[0], wallId: "garden", center: [0.3, 0.95] }];
+  const m = compile(d),
+    w = m.walls.find((w) => w.id === "detail-garden")!;
+  assert.equal(w.role, "courtyard");
+  assert.equal(m.openings[0].wallId, w.id);
+  assert.deepEqual(m.levels, compile().levels);
+  d.exteriorWalls[0].height.evidence = [];
+  assert(!compile(d).walls.some((w) => w.id === "detail-garden"));
+});
+
+test("wall-top profile needs vertical evidence, persists through edits, and preserves opening limits", () => {
+  const d = details();
+  d.wallTops = [
+    {
+      wallId: "L1-r0-w0",
+      profile: [
+        { fraction: 0, height: dim(3200) },
+        { fraction: 0.5, height: dim(4500) },
+        { fraction: 1, height: dim(3200) },
+      ],
+      evidence: [ev(2)],
+    },
+  ];
+  const m = compile(d),
+    w = m.walls.find((w) => w.id === "L1-r0-w0")!;
+  assert.equal(w.height, 4500);
+  assert.equal(w.topProfile?.length, 3);
+  const changed = transformElement(m, w.id, {
+    dx: 0,
+    dz: 0,
+    dy: 0,
+    rotation: 0,
+    sx: 2,
+    sy: 2,
+    sz: 1,
+  });
+  assert.equal(
+    changed.walls.find((x) => x.id === w.id)!.topProfile![1][1],
+    9000,
+  );
+  d.wallTops[0].profile[0].height.evidence = [ev(1)];
+  assert.equal(
+    compile(d).walls.find((w) => w.id === "L1-r0-w0")!.topProfile,
+    undefined,
+  );
+});

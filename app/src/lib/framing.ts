@@ -1,5 +1,6 @@
 import {
   length,
+  wallTop,
   type WallData,
   type OpeningData,
   type BuildingModel,
@@ -43,6 +44,7 @@ export function editWallMember(
     depth: wall.thickness,
     height: p.height,
     rotation: (angle * 180) / Math.PI,
+    ...(p.pitch ? { pitch: (p.pitch * 180) / Math.PI } : {}),
   }));
   model.components.push(...components);
   model.framingAssemblies = [
@@ -74,6 +76,7 @@ export type FramePiece = {
   width: number;
   height: number;
   kind: "stud" | "track" | "header";
+  pitch?: number;
 };
 export const MEMBER_FACE = 38;
 
@@ -107,7 +110,11 @@ export function wallFraming(
         a: Math.max(0, x0),
         b: Math.min(span, x1),
         c: Math.max(0, y0),
-        d: Math.min(wall.height, y1),
+        d: Math.min(
+          wallTop(wall, Math.max(0, x0)),
+          wallTop(wall, Math.min(span, x1)),
+          y1,
+        ),
       },
     ];
     for (const hole of holes) {
@@ -136,7 +143,22 @@ export function wallFraming(
         });
   };
   add(0, 0, span, face, "track");
-  add(0, wall.height - face, span, wall.height, "track");
+  if (wall.topProfile) {
+    for (let i = 1; i < wall.topProfile.length; i++) {
+      const a = wall.topProfile[i - 1],
+        b = wall.topProfile[i],
+        dx = (b[0] - a[0]) * span,
+        dy = b[1] - a[1];
+      result.push({
+        x: ((a[0] + b[0]) * span) / 2,
+        y: (a[1] + b[1]) / 2 - face / 2,
+        width: Math.hypot(dx, dy),
+        height: face,
+        kind: "track",
+        pitch: Math.atan2(dy, dx),
+      });
+    }
+  } else add(0, wall.height - face, span, wall.height, "track");
   const positions = new Set([face / 2, span - face / 2]);
   // Bound pathological imported geometry; never silently change the spacing.
   if (span / spacing > 5000 || spacing < 100)
@@ -152,7 +174,13 @@ export function wallFraming(
       add(h.left, h.bottom - face, h.right, h.bottom, "track");
   }
   for (const x of positions)
-    add(x - face / 2, face, x + face / 2, wall.height - face, "stud");
+    add(
+      x - face / 2,
+      face,
+      x + face / 2,
+      Math.min(wallTop(wall, x - face / 2), wallTop(wall, x + face / 2)) - face,
+      "stud",
+    );
   return result;
 }
 
