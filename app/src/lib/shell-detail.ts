@@ -27,6 +27,26 @@ const dimension = z.object({
 });
 export const ShellDetailDraft = z.object({
   version: z.literal(1),
+  wallRemovals: z
+    .array(
+      z.object({
+        wallId: z.string(),
+        reason: z.string().min(1),
+        evidence: z.array(source).min(1).max(8),
+      }),
+    )
+    .max(100)
+    .default([]),
+  roofOpenings: z
+    .array(
+      z.object({
+        levelId: z.string(),
+        outlines: z.array(z.array(point).min(3).max(100)).min(1).max(20),
+        evidence: z.array(source).min(2).max(8),
+      }),
+    )
+    .max(30)
+    .default([]),
   wallTypes: z
     .array(
       z.object({ id: z.string(), label: z.string(), thickness: dimension }),
@@ -54,6 +74,8 @@ export const ShellDetailDraft = z.object({
         tag: z.string(),
         kind: z.enum(["door", "window"]),
         wallId: z.string(),
+        replacesOpeningId: z.string().nullable().default(null),
+        operation: z.string().default(""),
         dimensionBasis: z
           .enum(["rough-opening", "unit", "unknown"])
           .default("unknown"),
@@ -119,21 +141,37 @@ export const ShellDetailDraft = z.object({
 // Strict API schema requires new fields; stored v1 checkpoints can omit them.
 const StrictOpenings = ShellDetailDraft.shape.openings.element
   .extend({
+    replacesOpeningId:
+      ShellDetailDraft.shape.openings.element.shape.replacesOpeningId.removeDefault(),
+    operation:
+      ShellDetailDraft.shape.openings.element.shape.operation.removeDefault(),
     dimensionBasis:
       ShellDetailDraft.shape.openings.element.shape.dimensionBasis.removeDefault(),
   })
   .array()
   .max(250);
 export const DetailResponseSchema = ShellDetailDraft.extend({
+  wallRemovals: ShellDetailDraft.shape.wallRemovals.removeDefault(),
+  roofOpenings: ShellDetailDraft.shape.roofOpenings.removeDefault(),
   openings: StrictOpenings,
   exteriorWalls: ShellDetailDraft.shape.exteriorWalls.removeDefault(),
   wallTops: ShellDetailDraft.shape.wallTops.removeDefault(),
 });
 export const OpeningResponseSchema = ShellDetailDraft.pick({
   version: true,
+  wallTypes: true,
+  partitions: true,
+  wallRemovals: true,
+  exteriorWalls: true,
+  wallTops: true,
   openings: true,
   issues: true,
-}).extend({ openings: StrictOpenings });
+}).extend({
+  openings: StrictOpenings,
+  wallRemovals: ShellDetailDraft.shape.wallRemovals.removeDefault(),
+  exteriorWalls: ShellDetailDraft.shape.exteriorWalls.removeDefault(),
+  wallTops: ShellDetailDraft.shape.wallTops.removeDefault(),
+});
 export type ShellDetailData = z.infer<typeof ShellDetailDraft>;
 type P = number[];
 const distance = (a: P, b: P) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -336,6 +374,42 @@ export function compileShellDetail(
       : w.id.includes("-r")
         ? "courtyard"
         : undefined;
+  // Only source-backed inferred geometry can be replaced. Non-inferred
+  // elements and saved custom assemblies are protected here; the workflow
+  // separately saves reruns as candidates instead of replacing human revisions.
+  for (const removal of draft.wallRemovals) {
+    const wall = m.walls.find((w) => w.id === removal.wallId);
+    const level = baseDraft.levels.find((l) => l.id === wall?.levelId);
+    if (
+      !wall ||
+      !wall.inferred ||
+      !level ||
+      m.framingAssemblies?.some((a) => a.wallId === wall.id) ||
+      !ev(removal.evidence).some((e) => e.page === level.planPage) ||
+      m.openings.some((o) => o.wallId === wall.id && !o.inferred)
+    ) {
+      reject(
+        { ...removal, id: removal.wallId },
+        "wall-correction",
+        "Wall correction lacks plan evidence or would overwrite reviewed geometry.",
+      );
+      continue;
+    }
+    for (const o of m.openings.filter((o) => o.wallId === wall.id)) {
+      m.unresolvedObservations.push({
+        id: o.id,
+        kind: "opening",
+        label: o.tag,
+        reason:
+          "Host wall corrected; opening must be reconciled on the replacement wall.",
+        raw: JSON.stringify(o),
+        evidence: o.evidence,
+      });
+    }
+    m.openings = m.openings.filter((o) => o.wallId !== wall.id);
+    m.walls = m.walls.filter((w) => w.id !== wall.id);
+    issue(`${wall.label}: source-backed wall correction — ${removal.reason}`);
+  }
   const partitionWalls = new Map<string, BuildingModel["walls"]>();
   for (const p of draft.partitions) {
     const l = m.levels.find((l) => l.id === p.levelId),
@@ -518,7 +592,17 @@ export function compileShellDetail(
     const wall = m.walls.find(
       (w) => w.id === top.wallId || w.id === id(top.wallId),
     );
-    const values = top.profile.map((p) => [p.fraction, dim(p.height)]);
+    // A single elevation may support the whole profile. Accept that shared
+    // citation when a vertex omits its own, but do not override a conflicting
+    // explicit vertex citation (for example a floor plan without heights).
+    const measurements = top.profile.map((p) => ({
+      ...p.height,
+      evidence: p.height.evidence.length ? p.height.evidence : top.evidence,
+    }));
+    const values = top.profile.map((p, i) => [
+      p.fraction,
+      dim(measurements[i]),
+    ]);
     if (
       !wall ||
       !ev(top.evidence).length ||
@@ -531,9 +615,9 @@ export function compileShellDetail(
           p[1]! > 10000 ||
           (i > 0 && p[0]! <= values[i - 1][0]!),
       ) ||
-      top.profile.some(
+      measurements.some(
         (p) =>
-          !ev(p.height.evidence).some((e) =>
+          !ev(p.evidence).some((e) =>
             baseDraft.sheets.some(
               (s) =>
                 s.page === e.page && ["section", "elevation"].includes(s.kind),
@@ -557,9 +641,53 @@ export function compileShellDetail(
     );
   }
   for (const o of draft.openings) {
-    const width = dim(o.width),
-      height = dim(o.height),
-      sill = dim(o.sill);
+    let replacement = o.replacesOpeningId
+      ? m.openings.find((x) => x.id === o.replacesOpeningId)
+      : undefined;
+    if (o.replacesOpeningId && !replacement) {
+      const orphan = m.unresolvedObservations.find(
+        (x) =>
+          x.id === o.replacesOpeningId &&
+          x.kind === "opening" &&
+          x.reason ===
+            "Host wall corrected; opening must be reconciled on the replacement wall.",
+      );
+      if (orphan) {
+        try {
+          const parsed = ModelSchema.shape.openings.element.safeParse(
+            JSON.parse(orphan.raw),
+          );
+          if (parsed.success) replacement = parsed.data;
+        } catch {
+          /* Invalid retained observation must not authorize a replacement. */
+        }
+      }
+    }
+    if (
+      o.replacesOpeningId &&
+      (!replacement ||
+        !replacement.inferred ||
+        replacement.tag !== o.tag ||
+        replacement.kind !== o.kind ||
+        m.framingAssemblies?.some((a) => a.wallId === replacement.wallId))
+    ) {
+      reject(
+        o,
+        "opening",
+        "Opening correction does not identify an editable existing instance of the same tag and kind.",
+      );
+      continue;
+    }
+    // Schedule rows commonly cite width, height and sill together. Preserve
+    // that shared citation instead of discarding otherwise supported values.
+    const measured = (d: z.infer<typeof dimension>) =>
+      dim({
+        ...d,
+        evidence: d.evidence.length ? d.evidence : o.evidence,
+      });
+    const width = measured(o.width),
+      height = measured(o.height),
+      sill = measured(o.sill);
     const candidates =
       partitionWalls.get(o.wallId) ??
       m.walls.filter((w) => w.id === id(o.wallId) || w.id === o.wallId);
@@ -591,9 +719,22 @@ export function compileShellDetail(
       sill === null ||
       width < 100 ||
       height < 100 ||
-      sill < 0 ||
+      (sill < 0 &&
+        (o.kind !== "door" ||
+          sill < -300 ||
+          o.sill.estimated ||
+          !ev(o.sill.evidence).some((e) =>
+            baseDraft.sheets.some(
+              (s) =>
+                s.page === e.page && ["section", "elevation"].includes(s.kind),
+            ),
+          ))) ||
       height + sill > w.height + 1 ||
-      used.has(id(o.id))
+      (used.has(id(o.id)) && replacement?.id !== id(o.id)) ||
+      !ev(o.evidence).some(
+        (e) =>
+          e.page === baseDraft.levels.find((l) => l.id === w.levelId)?.planPage,
+      )
     ) {
       reject(
         o,
@@ -614,6 +755,7 @@ export function compileShellDetail(
       offset + width > length + 25 ||
       m.openings.some(
         (x) =>
+          x.id !== replacement?.id &&
           x.wallId === w.id &&
           sill < x.sill + x.height &&
           sill + height > x.sill &&
@@ -629,8 +771,18 @@ export function compileShellDetail(
       continue;
     }
     used.add(id(o.id));
+    if (replacement)
+      m.openings = m.openings.filter((x) => x.id !== replacement.id);
+    // A new host may resolve a previously withheld schedule instance.
+    m.unresolvedObservations = m.unresolvedObservations.filter(
+      (x) =>
+        !(
+          x.kind === "opening" &&
+          (x.id === replacement?.id || x.id === id(o.id))
+        ),
+    );
     m.openings.push({
-      id: id(o.id),
+      id: replacement?.id ?? id(o.id),
       label: o.label,
       tag: o.tag,
       kind: o.kind,
@@ -640,11 +792,64 @@ export function compileShellDetail(
       width,
       height,
       sill,
-      operation: "",
+      operation:
+        o.operation ||
+        m.scheduleEntries?.find((s) => s.tag === o.tag && s.kind === o.kind)
+          ?.operation ||
+        "",
       dimensionBasis: o.dimensionBasis,
       inferred: true,
       evidence,
     });
+    if (sill < 0)
+      issue(
+        `${o.tag}: threshold is ${sill} mm relative to the level datum. Scheduled unit height is retained. Preview framing stops at the level base; verify the local wall base and threshold detail before fabrication.`,
+        replacement?.id ?? id(o.id),
+      );
+    if (o.sill.estimated)
+      issue(
+        `${o.tag}: threshold/sill is provisional (${sill} mm). ${o.sill.evidence.map((e) => e.note).join(" ")}`,
+        replacement?.id ?? id(o.id),
+      );
+  }
+  // A floor void can include a roofed outdoor approach. Only an explicitly
+  // sourced roof-plan opening can refine it; legacy drafts retain the guard.
+  const roofOpenings = new Map<string, P[][]>();
+  for (const opening of draft.roofOpenings) {
+    const l = m.levels.find((l) => l.id === opening.levelId);
+    const t = transforms.get(opening.levelId);
+    const sourceLevel = baseDraft.levels.find((l) => l.id === opening.levelId);
+    const evidence = ev(opening.evidence);
+    const outlines = t ? opening.outlines.map((r) => r.map(t)) : [];
+    if (
+      !l ||
+      !t ||
+      !sourceLevel ||
+      roofOpenings.has(l.id) ||
+      !evidence.some((e) => e.page === sourceLevel.planPage) ||
+      !evidence.some((e) =>
+        baseDraft.sheets.some(
+          (s) => s.page === e.page && s.kind === "roof-plan",
+        ),
+      ) ||
+      outlines.some(
+        (r) =>
+          !simplePolygon(r) ||
+          polygonArea(r) < 10000 ||
+          !r.every((p, i) =>
+            segmentInFloor(p, r[(i + 1) % r.length], l.outline, []),
+          ),
+      ) ||
+      l.voids.some((v) => !outlines.some((r) => overlapsInterior(r, v)))
+    ) {
+      reject(
+        { ...opening, id: opening.levelId },
+        "roof-opening",
+        "Roof opening needs valid floor/roof-plan evidence and must preserve each courtyard.",
+      );
+      continue;
+    }
+    roofOpenings.set(l.id, outlines);
   }
   const roofs: BuildingModel["roofs"] = [];
   for (const r of draft.roofs) {
@@ -701,7 +906,7 @@ export function compileShellDetail(
     ];
     const vertices = outline.map(vertex),
       voids = holes.map((h) => h.map(vertex));
-    const courtyardFilled = l.voids.some(
+    const courtyardFilled = (roofOpenings.get(l.id) ?? l.voids).some(
       (h) =>
         overlapsInterior(outline, h) &&
         !holes.some((hole) =>
@@ -779,6 +984,20 @@ export function compileShellDetail(
   }
   if (openingStage) {
     for (const i of draft.issues) issue(i.message);
+    const missing: string[] = [];
+    for (const s of m.scheduleEntries ?? []) {
+      const expected = s.quantity ?? (s.tagRole === "instance" ? 1 : null);
+      const actual = m.openings.filter(
+        (o) => o.kind === s.kind && o.tag === s.tag,
+      ).length;
+      if (expected !== null && actual < expected)
+        missing.push(`${s.tag}: ${actual}/${expected}`);
+    }
+    issue(
+      `Current opening reconciliation: ${m.openings.filter((o) => o.kind === "door").length} doors and ${m.openings.filter((o) => o.kind === "window").length} windows placed. ${missing.length ? "Unplaced schedule instances: " + missing.join(", ") : "No missing instances in schedule rows with known quantities."} Placement, operation and threshold review is still required.`,
+      null,
+      missing.length ? "error" : "warning",
+    );
     return ModelSchema.parse(m);
   }
   const coverage = roofCoverage(m);

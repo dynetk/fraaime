@@ -248,7 +248,7 @@ async function extractProjectShell(
   await phase(jobId, "Checking AI input size and budget");
   const estimate = await countRequestReservation(
     detailStage
-      ? buildShellDetailRequest(
+      ? await buildShellDetailRequest(
           pages,
           j.plan_id,
           base!.model,

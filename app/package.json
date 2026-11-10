@@ -26,6 +26,7 @@
     "pg": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "sharp": "^0.35.5",
     "three": "latest",
     "workflow": "latest",
     "zod": "4.6.7"

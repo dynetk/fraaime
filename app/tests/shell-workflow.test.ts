@@ -129,6 +129,10 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
       interruptOpenings = false;
     const detailDraft = {
       version: 1,
+      wallRemovals: [],
+      exteriorWalls: [],
+      wallTops: [],
+      roofOpenings: [],
       wallTypes: [
         {
           id: "T",

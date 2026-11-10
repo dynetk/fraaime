@@ -118,6 +118,35 @@ test("framing leaves door/window apertures clear, including stacked openings", (
       );
     }
 });
+test("below-datum thresholds keep the scheduled header elevation and clear the base track", () => {
+  const m = exampleModel(),
+    w = m.walls[0];
+  const door = {
+    ...m.openings[0],
+    kind: "door" as const,
+    wallId: w.id,
+    sill: -15.875,
+  };
+  const members = wallFraming(w, [door], 406.4);
+  const headers = members.filter((p) => p.role === "box header C stud");
+  assert.equal(headers.length, 2);
+  for (const header of headers) {
+    assert(
+      Math.abs(header.y - header.height / 2 - door.sill - door.height) < 0.001,
+    );
+    assert(Math.abs(header.width - door.width) < 0.001);
+  }
+  for (const p of members) {
+    assert(p.y - p.height / 2 >= 0);
+    const overlapX =
+      Math.min(p.x + p.width / 2, door.offset + door.width) -
+      Math.max(p.x - p.width / 2, door.offset);
+    const overlapY =
+      Math.min(p.y + p.height / 2, door.sill + door.height) -
+      Math.max(p.y - p.height / 2, door.sill);
+    assert(!(overlapX > 0.001 && overlapY > 0.001));
+  }
+});
 test("framing follows resized walls and spacing without mutating the model", () => {
   const m = exampleModel(),
     before = JSON.stringify(m),

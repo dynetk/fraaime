@@ -114,7 +114,7 @@ export function transformElement(
           o.offset + t.dx * Math.cos(a) + t.dz * Math.sin(a),
         ),
       );
-      o.sill = Math.max(0, o.sill + t.dy);
+      o.sill = Math.max(o.kind === "door" ? -300 : 0, o.sill + t.dy);
       o.width *= t.sx;
       o.height *= t.sy;
     }

@@ -127,7 +127,13 @@ export const ModelSchema = ExtractionModelSchema.extend({
   openings: z
     .array(
       Opening.extend({
+        // Local exterior thresholds may sit just below the story datum.
+        // Keep the generic extraction schema conservative; the fusion compiler
+        // admits these only with explicit section/elevation evidence.
+        sill: z.number().min(-300).max(30000),
         dimensionBasis: z.enum(["rough-opening", "unit", "unknown"]).optional(),
+      }).refine((o) => o.sill >= 0 || o.kind === "door", {
+        message: "Only door thresholds may sit below the level datum",
       }),
     )
     .max(5000),

@@ -2,6 +2,9 @@ import { withWorkflow } from "workflow/next";
 import type { NextConfig } from "next";
 const config: NextConfig = {
   serverExternalPackages: ["@electric-sql/pglite", "pg"],
+  outputFileTracingExcludes: {
+    "/*": ["./.local/**/*", "./private/**/*", "./.env*"],
+  },
   poweredByHeader: false,
   experimental: {
     proxyClientMaxBodySize:

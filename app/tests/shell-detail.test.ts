@@ -150,6 +150,136 @@ function compile(d = details()) {
     "test",
   );
 }
+test("source-backed wall correction removes the duplicate host and defers its openings without touching human walls", () => {
+  const b = baseDraft(),
+    base = compile(),
+    d = details();
+  d.partitions = [];
+  d.openings = [];
+  d.roofs = [];
+  d.wallRemovals = [
+    {
+      wallId: "detail-p",
+      reason: "Incorrect duplicated host",
+      evidence: [ev()],
+    },
+  ];
+  const corrected = compileShellDetail(d, base, b, pages, "test");
+  assert(!corrected.walls.some((w) => w.id === "detail-p"));
+  assert.equal(corrected.openings.length, 0);
+  assert(
+    corrected.unresolvedObservations?.some((o) =>
+      /Host wall corrected/.test(o.reason),
+    ),
+  );
+  assert.deepEqual(corrected.levels, base.levels);
+  const recovery = details();
+  recovery.partitions[0].id = "new-host";
+  recovery.openings[0].wallId = "new-host";
+  recovery.openings[0].replacesOpeningId = "detail-d";
+  recovery.openings[0].evidence.push(ev(2));
+  recovery.openings[0].width.evidence = [];
+  recovery.openings[0].height.evidence = [];
+  recovery.openings[0].sill.evidence = [];
+  recovery.roofs = [];
+  const recovered = compileShellDetail(recovery, corrected, b, pages, "test");
+  assert.equal(recovered.openings.length, 1);
+  assert.equal(recovered.openings[0].id, "detail-d");
+  assert.equal(recovered.openings[0].wallId, "detail-new-host");
+  assert(!recovered.unresolvedObservations?.some((o) => o.id === "detail-d"));
+  base.walls.find((w) => w.id === "detail-p")!.inferred = false;
+  const retained = compileShellDetail(d, base, b, pages, "test");
+  assert(retained.walls.some((w) => w.id === "detail-p"));
+  assert.equal(retained.openings.length, 1);
+});
+test("opening reconciliation replaces the same instance atomically and retains operation and provisional threshold evidence", () => {
+  const b = baseDraft(),
+    base = compile(),
+    d = details();
+  d.partitions = [];
+  d.roofs = [];
+  d.openings[0].replacesOpeningId = "detail-d";
+  d.openings[0].center = [0.7, 0.3];
+  d.openings[0].operation = "Left hinged";
+  d.openings[0].sill.estimated = true;
+  const corrected = compileShellDetail(d, base, b, pages, "test", true);
+  assert.equal(corrected.openings.length, 1);
+  assert.equal(corrected.openings[0].id, "detail-d");
+  assert.equal(corrected.openings[0].operation, "Left hinged");
+  assert.equal(corrected.openings[0].offset, 7050);
+  assert(
+    corrected.issues.some((i) =>
+      /threshold\/sill is provisional/.test(i.message),
+    ),
+  );
+  d.openings[0].center = [0.7, 0.7];
+  const rejected = compileShellDetail(d, base, b, pages, "test", true);
+  assert.deepEqual(rejected.openings, base.openings);
+  d.openings[0].center = [0.7, 0.3];
+  base.openings[0].inferred = false;
+  assert.deepEqual(
+    compileShellDetail(d, base, b, pages, "test", true).openings,
+    base.openings,
+  );
+});
+test("a supported below-datum door threshold survives compilation, horizontal editing and serialization", () => {
+  const d = details();
+  d.openings[0].sill = dim(-15.875);
+  const model = compile(d);
+  assert.equal(model.openings.length, 1);
+  assert.equal(model.openings[0].sill, -15.875);
+  assert.equal(model.openings[0].height, 2100);
+  assert(
+    model.issues.some((i) => /verify the local wall base/.test(i.message)),
+  );
+  const moved = transformElement(model, model.openings[0].id, {
+    dx: 50,
+    dy: 0,
+    dz: 0,
+    rotation: 0,
+    sx: 1,
+    sy: 1,
+    sz: 1,
+  });
+  assert.equal(
+    ModelSchema.parse(JSON.parse(JSON.stringify(moved))).openings[0].sill,
+    -15.875,
+  );
+  assert.deepEqual(validateModel(moved), []);
+  d.openings[0].sill.evidence = [ev(1)];
+  assert.equal(compile(d).openings.length, 0);
+  d.openings[0].sill = { ...dim(-15.875), estimated: true };
+  assert.equal(compile(d).openings.length, 0);
+  d.openings[0].sill = dim(-301);
+  assert.equal(compile(d).openings.length, 0);
+  d.openings[0].sill = dim(-15.875);
+  d.openings[0].kind = "window";
+  assert.equal(compile(d).openings.length, 0);
+});
+test("roof-plan void may differ from the floor void but cannot erase the courtyard or rely on floor-only evidence", () => {
+  const b = baseDraft();
+  b.sheets[2].kind = "roof-plan";
+  const base = compileShell(b, pages, "test", "Synthetic"),
+    d = details();
+  const roofVoid = [
+    [0.42, 0.48],
+    [0.58, 0.48],
+    [0.58, 0.6],
+    [0.42, 0.6],
+  ];
+  d.roofOpenings = [
+    { levelId: "L1", outlines: [roofVoid], evidence: [ev(1), ev(3)] },
+  ];
+  d.roofs[0].voids = [roofVoid];
+  const result = compileShellDetail(d, base, b, pages, "test");
+  assert.equal(result.roofs.length, 1);
+  assert.deepEqual(result.levels, base.levels);
+  d.roofs[0].voids = [];
+  assert.equal(compileShellDetail(d, base, b, pages, "test").roofs.length, 0);
+  d.roofs[0].voids = [roofVoid];
+  d.roofOpenings[0].evidence = [ev(1), ev(2)];
+  assert.equal(compileShellDetail(d, base, b, pages, "test").roofs.length, 0);
+});
 test("details add editable partition/door, preserve floors and courtyard roof hole", () => {
   const m = compile();
   assert.equal(m.walls.filter((w) => w.role === "interior").length, 1);
@@ -338,6 +468,19 @@ test("wall-top profile needs vertical evidence, persists through edits, and pres
     w = m.walls.find((w) => w.id === "L1-r0-w0")!;
   assert.equal(w.height, 4500);
   assert.equal(w.topProfile?.length, 3);
+  const shared = structuredClone(d);
+  shared.wallTops[0].profile.forEach((p) => {
+    p.height.evidence = [];
+  });
+  assert.deepEqual(
+    compile(shared).walls.find((x) => x.id === w.id)!.topProfile,
+    w.topProfile,
+  );
+  shared.wallTops[0].evidence = [ev(1)];
+  assert.equal(
+    compile(shared).walls.find((x) => x.id === w.id)!.topProfile,
+    undefined,
+  );
   const changed = transformElement(m, w.id, {
     dx: 0,
     dz: 0,
@@ -355,5 +498,56 @@ test("wall-top profile needs vertical evidence, persists through edits, and pres
   assert.equal(
     compile(d).walls.find((w) => w.id === "L1-r0-w0")!.topProfile,
     undefined,
+  );
+});
+
+import sharp from "sharp";
+import { planCoordinateCrops } from "../src/lib/plan-crops";
+test("coordinate crops preserve full-page bounds and handle odd-sized worker tiles", async () => {
+  const raster = await sharp({
+    create: { width: 300, height: 201, channels: 3, background: "white" },
+  })
+    .png()
+    .toBuffer();
+  const images = [{ region: [0, 0, 1, 1], base64: raster.toString("base64") }];
+  for (const region of [
+    [0, 0, 0.5, 0.5],
+    [0.5, 0, 1, 0.5],
+    [0, 0.5, 0.5, 1],
+    [0.5, 0.5, 1, 1],
+  ]) {
+    const left = Math.floor(region[0] * 300),
+      top = Math.floor(region[1] * 201);
+    const tile = await sharp(raster)
+      .extract({
+        left,
+        top,
+        width: Math.floor(region[2] * 300) - left,
+        height: Math.floor(region[3] * 201) - top,
+      })
+      .png()
+      .toBuffer();
+    images.push({ region, base64: tile.toString("base64") });
+  }
+  const result = await planCoordinateCrops(
+    { ...pages[0], images },
+    baseDraft().levels,
+  );
+  assert.equal(result.length, 3);
+  for (const image of result) {
+    assert(image.region.every((n) => n >= 0 && n <= 1));
+    assert(
+      image.region[2] > image.region[0] && image.region[3] > image.region[1],
+    );
+    const metadata = await sharp(
+      Buffer.from(image.base64, "base64"),
+    ).metadata();
+    assert(metadata.width! <= 1536 && metadata.height! <= 1536);
+    assert.equal(metadata.format, "jpeg");
+  }
+  assert(result[0].region[3] > result[1].region[1]);
+  assert.equal(
+    (await planCoordinateCrops(pages[1], baseDraft().levels)).length,
+    0,
   );
 });

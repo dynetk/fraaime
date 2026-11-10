@@ -70,6 +70,7 @@ const code = await Promise.all(
     "../src/lib/shell-provider.ts",
     "../src/lib/shell-detail.ts",
     "../src/lib/shell-detail-provider.ts",
+    "../src/lib/plan-crops.ts",
     "../src/lib/model.ts",
   ].map((f) => readFile(new URL(f, import.meta.url), "utf8")),
 );
@@ -162,7 +163,7 @@ try {
     const preflight = live
       ? await countRequestReservation(
           details
-            ? buildShellDetailRequest(
+            ? await buildShellDetailRequest(
                 pages,
                 "evaluation-" + project.id,
                 base,
