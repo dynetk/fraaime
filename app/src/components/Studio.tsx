@@ -2,6 +2,9 @@
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useDialog } from "./useDialog";
+import Brand from "./Brand";
+import EstimatePanel from "./EstimatePanel";
+import { MOCK_ESTIMATE_SETTINGS } from "@/lib/estimate-settings";
 import {
   BuildingModel,
   blankModel,
@@ -92,11 +95,10 @@ export default function Studio() {
     [levelId, setLevelId] = useState(""),
     [roofVisible, setRoofVisible] = useState(false),
     [framing, setFraming] = useState(true),
-    [spacing, setSpacing] = useState(406.4),
     [top, setTop] = useState(false);
-  const [tab, setTab] = useState<"model" | "sheets" | "schedule" | "review">(
-      "model",
-    ),
+  const [tab, setTab] = useState<
+      "model" | "sheets" | "schedule" | "estimate" | "review"
+    >("model"),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
@@ -108,6 +110,15 @@ export default function Studio() {
       page: number;
       region?: number[] | null;
     } | null>(null);
+  const spacing = model.estimate?.spacingMm ?? 406.4;
+  const setSpacing = (value: number) =>
+    change({
+      ...model,
+      estimate: {
+        ...(model.estimate ?? MOCK_ESTIMATE_SETTINGS),
+        spacingMm: value as 406.4 | 609.6,
+      },
+    });
   const selections = Object.fromEntries(
     (detail?.plans ?? []).map((plan) => [
       plan.id,
@@ -253,11 +264,16 @@ export default function Studio() {
   };
   const save = async (review = false) =>
     run(async () => {
+      const snapshot = {
+        ...model,
+        estimate: model.estimate ?? structuredClone(MOCK_ESTIMATE_SETTINGS),
+      };
       const r = await api(
         `projects/${projectId}/${review ? "review" : "model"}`,
         "POST",
-        { baseId, model },
+        { baseId, model: snapshot },
       );
+      setModel((current) => (current === model ? snapshot : current));
       setBaseId(r.id);
       setViewedRevision(r.id);
       setDirty(false);
@@ -381,9 +397,7 @@ export default function Studio() {
     <div className="app-shell">
       {dialog}
       <header className="masthead">
-        <a className="wordmark" href="/">
-          fraaime<span>®</span>
-        </a>
+        <Brand />
         <div className="mastnote">
           PROJECT STUDIO <span>INVITED PILOT</span>
         </div>
@@ -463,16 +477,16 @@ export default function Studio() {
           )}
           {!projectId ? (
             <section className="welcome">
-              <div className="eyebrow">FROM PLANS TO POSSIBILITIES</div>
+              <div className="eyebrow">AI-POWERED STRUCTURAL FRAMING</div>
               <h1>
-                A clearer view
+                Your plans.
                 <br />
-                of what comes next.
+                Precision in view.
               </h1>
               <p>
                 Bring your drawings into one workspace. Review source sheets,
-                build an editable model, and keep every correction with the
-                project.
+                refine your framing model, and explore a preliminary estimate.
+                Every correction stays with your project.
               </p>
               <div className="actions">
                 <button className="primary" onClick={() => create()}>
@@ -490,8 +504,10 @@ export default function Studio() {
                   <p>Selected sheets become a traceable draft.</p>
                 </article>
                 <article>
-                  <b>03 / Review</b>
-                  <p>Correct the model before you rely on it.</p>
+                  <b>03 / Review & estimate</b>
+                  <p>
+                    Review the framing and adjust sample pricing before sharing.
+                  </p>
                 </article>
               </div>
             </section>
@@ -528,23 +544,25 @@ export default function Studio() {
                 </div>
               </section>
               <div className="tabs">
-                {(["model", "sheets", "schedule", "review"] as const).map(
-                  (t) => (
-                    <button
-                      key={t}
-                      className={tab === t ? "active" : ""}
-                      onClick={() => setTab(t)}
-                    >
-                      {t === "model"
-                        ? "3D model"
-                        : t === "sheets"
-                          ? "Source sheets"
-                          : t === "schedule"
-                            ? "Opening schedule"
+                {(
+                  ["model", "sheets", "schedule", "estimate", "review"] as const
+                ).map((t) => (
+                  <button
+                    key={t}
+                    className={tab === t ? "active" : ""}
+                    onClick={() => setTab(t)}
+                  >
+                    {t === "model"
+                      ? "3D model"
+                      : t === "sheets"
+                        ? "Source sheets"
+                        : t === "schedule"
+                          ? "Opening schedule"
+                          : t === "estimate"
+                            ? "Estimate"
                             : `Review (${unresolved.length})`}
-                    </button>
-                  ),
-                )}
+                  </button>
+                ))}
                 <span>
                   {dirty
                     ? "● Unsaved changes"
@@ -553,6 +571,14 @@ export default function Studio() {
                       : "No model yet"}
                 </span>
               </div>
+              {tab === "estimate" && (
+                <EstimatePanel
+                  model={model}
+                  revision={viewedRevision}
+                  dirty={dirty}
+                  onSettings={(estimate) => change({ ...model, estimate })}
+                />
+              )}
               {tab === "model" && (
                 <>
                   <div className="framing-controls">

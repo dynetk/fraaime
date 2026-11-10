@@ -1,3 +1,4 @@
+import { MOCK_ESTIMATE_SETTINGS } from "../src/lib/estimate-settings";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openLocal, uid, now } from "../src/lib/db";
@@ -71,7 +72,10 @@ test("revision transactions prevent stale overwrites and keep reruns separate", 
     "SELECT model,reviewed FROM revisions WHERE id=$1",
     [reviewed],
   );
-  assert.deepEqual(saved.rows[0].model, clean);
+  assert.deepEqual(saved.rows[0].model, {
+    ...clean,
+    estimate: MOCK_ESTIMATE_SETTINGS,
+  });
   assert.equal(saved.rows[0].reviewed, true);
   await db.close?.();
 });

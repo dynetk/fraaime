@@ -1,6 +1,7 @@
 import { BuildingModel, ModelSchema, validateModel } from "./model";
 import { Database, uid, now, audit } from "./db";
 import { HttpError } from "./access";
+import { MOCK_ESTIMATE_SETTINGS } from "./estimate-settings";
 export async function saveRevision(
   db: Database,
   projectId: string,
@@ -10,6 +11,7 @@ export async function saveRevision(
   reviewed = false,
 ) {
   const model = ModelSchema.parse(input);
+  model.estimate ??= structuredClone(MOCK_ESTIMATE_SETTINGS);
   if (
     reviewed &&
     (validateModel(model).some((i) => i.severity === "error") ||

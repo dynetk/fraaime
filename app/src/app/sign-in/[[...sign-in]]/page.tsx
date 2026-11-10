@@ -1,12 +1,16 @@
+import Brand from "@/components/Brand";
 import { SignIn } from "@clerk/nextjs";
 import { localMode } from "@/lib/config";
 export default function Page() {
   return (
     <main className="setup">
-      <a className="wordmark" href="/">
-        fraaime®
-      </a>
+      <Brand />
+      <div className="eyebrow">AI-POWERED STRUCTURAL FRAMING</div>
       <h1>Your project workspace.</h1>
+      <p>
+        Review your plans, refine your framing, and build with a clearer
+        picture.
+      </p>
       {localMode() ? (
         <>
           <p>Local development uses a loopback-only test identity.</p>

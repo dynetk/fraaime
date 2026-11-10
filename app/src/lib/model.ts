@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EstimateSettingsSchema } from "./estimate-settings";
 const id = z.string().min(1).max(160);
 const coord = z.number().finite().min(-1e7).max(1e7);
 export const Point = z.array(coord).length(2);
@@ -107,6 +108,7 @@ export const ExtractionModelSchema = z.object({
 });
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
+  estimate: EstimateSettingsSchema.optional(),
   walls: z
     .array(
       Wall.extend({
