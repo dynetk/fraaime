@@ -8,7 +8,7 @@ import {
 import { TitleOcrSchema, type Sheet } from "../src/lib/worker";
 const ocr = (text: string, confidence = 90) =>
   TitleOcrSchema.parse({
-    version: 1,
+    version: 2,
     engine: "tesseract",
     status: "complete",
     text,

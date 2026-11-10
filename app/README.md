@@ -125,3 +125,7 @@ Annotations contain `facts: [{id,kind,field,expected,tolerance}]`, where kind is
 - Saves are explicit, with unload warnings and revision conflicts. Closing without saving loses pending editor changes. No localStorage is treated as authoritative project data.
 
 An opt-in joint-sheet extraction path combines floor plans, sections, elevations, and roof/schedule evidence into a source-linked editable exterior shell. It is disabled by default (`FRAAIME_SHELL_FUSION=0`); see [EVALUATION.md](EVALUATION.md) for evaluation commands and limitations. Private source PDFs, responses, overlays, and customer models stay outside the repository.
+
+## Unclassified drawing review
+
+Before creating a new AI draft, resolve every unclassified source sheet: view it, then select it for extraction or choose **Reviewed: exclude** and give a reason. Decisions are saved and can be reopened. The server enforces the same check as the editor. Retry **Read unreadable titles (OCR)** on older uploads to use the v2 title reader; then choose **Use suggested sheets** and review the remaining unknown pages. Existing model revisions are preserved. See [OCR-EVALUATION.md](OCR-EVALUATION.md) for time limits, test procedure and limitations.

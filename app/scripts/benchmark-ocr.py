@@ -31,15 +31,21 @@ def full_ocr(pdf,page,rotation,folder):
         return {'status':'failed','text':'','error':type(e).__name__,'seconds':round(time.monotonic()-started,3)}
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cases',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--workers',type=int,default=3);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--cases',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--workers',type=int,default=3);p.add_argument('--native-cache',type=Path,help='Reuse inspected manifests after verifying PDF hashes');p.add_argument('--title-only',action='store_true',help='Compare title recognition without full-page OCR');a=p.parse_args()
     if not 1<=a.workers<=4:p.error('Use 1-4 workers to bound CPU and memory')
     a.out.mkdir(parents=True,exist_ok=True)
     version=subprocess.run([os.getenv('TESSERACT_CMD','tesseract'),'--version'],capture_output=True,text=True,check=True).stdout.splitlines()[0]
     started=time.monotonic();cases=[];tasks=[]
-    fingerprint=hashlib.sha256((Path(__file__).read_bytes()+Path(__file__).resolve().parents[1].joinpath('worker/title_ocr.py').read_bytes()+version.encode())).hexdigest()
+    fingerprint=hashlib.sha256((Path(__file__).read_bytes()+Path(__file__).resolve().parents[1].joinpath('worker/title_ocr.py').read_bytes()+version.encode()+str(a.title_only).encode())).hexdigest()
     for case in json.loads(a.cases.read_text()):
         if not re.fullmatch('[a-z0-9_-]+',case['name']):raise ValueError('Case names must be safe short identifiers')
-        pdf=Path(case['pdf']).resolve();t=time.monotonic();manifest=inspect_file(pdf,300)
+        pdf=Path(case['pdf']).resolve();t=time.monotonic()
+        cache=json.loads(a.native_cache.read_text()) if a.native_cache else []
+        cached=next((c for c in cache if c['name']==case['name']),None)
+        if cached:
+            with pdf.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+            if cached['sha256'] != digest: raise ValueError('Native cache source hash mismatch')
+        manifest=cached['manifest'] if cached else inspect_file(pdf,300)
         entry={'name':case['name'],'sha256':manifest['sha256'],'manifest':manifest,'nativeSeconds':round(time.monotonic()-t,3)}
         cases.append(entry)
         for sheet in manifest['sheets']:tasks.append((case['name'],pdf,sheet['page'],manifest['sha256']))
@@ -52,7 +58,7 @@ def main():
         with tempfile.TemporaryDirectory() as tmp:
             folder=Path(tmp);local=folder/'source.pdf';local.symlink_to(pdf)
             t=time.monotonic();ocr=ocr_file(local,page);seconds=round(time.monotonic()-t,3)
-            full=full_ocr(local,page,ocr.get('rotation',0),folder)
+            full={'status':'skipped','text':'','seconds':0} if a.title_only else full_ocr(local,page,ocr.get('rotation',0),folder)
             result={'sha256':digest,'fingerprint':fingerprint,'title':ocr,'titleSeconds':seconds,'full':full}
             target.write_text(json.dumps(result))
             return name,page,result,False

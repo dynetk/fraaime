@@ -25,6 +25,8 @@ import {
   SHELL_SHEET_KINDS,
   MAX_SHELL_PAGES,
   selectionWarnings,
+  pendingSheetReview,
+  needsSheetDecision,
 } from "@/lib/sheet-selection";
 const Viewer = dynamic(() => import("./ModelViewer"), {
   ssr: false,
@@ -111,6 +113,7 @@ export default function Studio() {
       page: number;
       region?: number[] | null;
     } | null>(null);
+  const [reviewOnly, setReviewOnly] = useState<Record<string, boolean>>({});
   const spacing = model.estimate?.spacingMm ?? 406.4;
   const setSpacing = (value: number) =>
     change({
@@ -131,6 +134,37 @@ export default function Studio() {
       ),
     ]),
   );
+  const pendingByPlan = Object.fromEntries(
+    (detail?.plans ?? []).map((plan) => [
+      plan.id,
+      pendingSheetReview(plan.manifest, selections[plan.id] ?? []),
+    ]),
+  );
+  const reviewSheet = async (
+    planId: string,
+    page: number,
+    decision: "exclude" | "reset",
+  ) => {
+    const reason =
+      decision === "exclude"
+        ? await prompt(
+            `After viewing PDF page ${page}, why can it be excluded from this model?`,
+            "",
+          )
+        : "Reopened for review";
+    if (!reason?.trim()) return;
+    run(async () => {
+      await api(`plans/${planId}/review`, "POST", { page, decision, reason });
+      if (decision === "exclude")
+        setPageSelections((prev) => ({
+          ...prev,
+          [planId]: (prev[planId] ?? selections[planId] ?? []).filter(
+            (p) => p !== page,
+          ),
+        }));
+      await refresh();
+    });
+  };
   const loadProjects = async () => setProjects(await api("projects"));
   const refresh = useCallback(async () => {
     if (projectId) setDetail(await api("projects/" + projectId));
@@ -1175,6 +1209,11 @@ export default function Studio() {
                             {j.error && <p className="error-text">{j.error}</p>}
                             {j.state === "failed" && (
                               <button
+                                disabled={
+                                  busy ||
+                                  (pendingByPlan[plan.id] ?? []).length > 0 ||
+                                  plan.manifest?.indexingComplete === false
+                                }
                                 onClick={async () => {
                                   if (
                                     await confirm(
@@ -1209,7 +1248,15 @@ export default function Studio() {
                               </button>
                             ) : (
                               <button
-                                disabled={busy}
+                                disabled={
+                                  busy ||
+                                  ((j.state === "needs_review" ||
+                                    j.state === "needs_selection") &&
+                                    ((pendingByPlan[plan.id] ?? []).length >
+                                      0 ||
+                                      plan.manifest?.indexingComplete ===
+                                        false))
+                                }
                                 onClick={() =>
                                   run(async () => {
                                     await api(`jobs/${j.id}/run`, "POST", {
@@ -1258,6 +1305,40 @@ export default function Studio() {
                               ? "Select 2–24 sheets. Existing drafts stay saved when you create a new one."
                               : "Maximum 30 pages per extraction run."}
                           </p>
+                          <section
+                            className="sheet-review"
+                            aria-label="Unclassified drawing review"
+                          >
+                            <h3>Review unclassified pages before generating</h3>
+                            <p>
+                              {(pendingByPlan[plan.id] ?? []).length} pages
+                              awaiting a decision. Open each drawing, then
+                              select its checkbox to include it, or choose
+                              “Reviewed: exclude” and record a reason. Title OCR
+                              failure does not prevent a selected drawing from
+                              reaching the AI.
+                            </p>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={reviewOnly[plan.id] ?? false}
+                                onChange={(e) =>
+                                  setReviewOnly((prev) => ({
+                                    ...prev,
+                                    [plan.id]: e.target.checked,
+                                  }))
+                                }
+                              />{" "}
+                              Show only pages needing a decision
+                            </label>
+                            {!(pendingByPlan[plan.id] ?? []).length && (
+                              <p role="status">
+                                All unclassified pages are included or
+                                explicitly excluded. Check the full selected set
+                                before generating.
+                              </p>
+                            )}
+                          </section>
                           {selectionWarnings(
                             plan.manifest,
                             selections[plan.id] ?? [],
@@ -1365,66 +1446,136 @@ export default function Studio() {
                             </p>
                           )}
                           <div className="sheet-grid">
-                            {plan.manifest.sheets.map((s) => (
-                              <div className="sheet" key={s.page}>
-                                <label>
-                                  <input
-                                    type="checkbox"
-                                    disabled={
-                                      plan.manifest?.indexingComplete === false
-                                    }
-                                    checked={(
-                                      selections[plan.id] ?? []
-                                    ).includes(s.page)}
-                                    onChange={(e) =>
-                                      setPageSelections((prev) => ({
-                                        ...prev,
-                                        [plan.id]: e.target.checked
-                                          ? [
-                                              ...(prev[plan.id] ??
+                            {plan.manifest.sheets
+                              .filter(
+                                (s) =>
+                                  !reviewOnly[plan.id] ||
+                                  (pendingByPlan[plan.id] ?? []).some(
+                                    (p) => p.page === s.page,
+                                  ),
+                              )
+                              .map((s) => (
+                                <div className="sheet" key={s.page}>
+                                  <label>
+                                    <input
+                                      type="checkbox"
+                                      disabled={
+                                        busy ||
+                                        plan.manifest?.indexingComplete ===
+                                          false
+                                      }
+                                      checked={(
+                                        selections[plan.id] ?? []
+                                      ).includes(s.page)}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setPageSelections((prev) => ({
+                                          ...prev,
+                                          [plan.id]: checked
+                                            ? [
+                                                ...new Set([
+                                                  ...(prev[plan.id] ??
+                                                    selections[plan.id] ??
+                                                    []),
+                                                  s.page,
+                                                ]),
+                                              ]
+                                            : (
+                                                prev[plan.id] ??
                                                 selections[plan.id] ??
-                                                []),
-                                              s.page,
-                                            ]
-                                          : (
-                                              prev[plan.id] ??
-                                              selections[plan.id] ??
-                                              []
-                                            ).filter((n) => n !== s.page),
-                                      }))
+                                                []
+                                              ).filter((p) => p !== s.page),
+                                        }));
+                                        if (needsSheetDecision(s))
+                                          run(async () => {
+                                            await api(
+                                              `plans/${plan.id}/review`,
+                                              "POST",
+                                              {
+                                                page: s.page,
+                                                decision: checked
+                                                  ? "include"
+                                                  : "reset",
+                                                reason: checked
+                                                  ? "Included for model evidence"
+                                                  : "Reopened for review",
+                                              },
+                                            );
+                                            await refresh();
+                                          });
+                                      }}
+                                    />
+                                    <b>{s.sheet || `Page ${s.page}`}</b>
+                                  </label>
+                                  <span>
+                                    {sheetKind(s)} {s.scanned ? "· scan" : ""}{" "}
+                                    {s.ocr
+                                      ? `· OCR ${s.ocr.status === "complete" ? "read" : s.ocr.status}`
+                                      : ""}
+                                  </span>
+                                  {s.ocr?.status === "complete" && (
+                                    <span className="fineprint">
+                                      OCR title:{" "}
+                                      {s.ocr.lines
+                                        .slice(0, 3)
+                                        .map((line) => line.text)
+                                        .join(" · ")}
+                                    </span>
+                                  )}
+                                  {s.ocr?.error && (
+                                    <span className="error-text">
+                                      {s.ocr.error}
+                                    </span>
+                                  )}
+                                  {s.review?.decision === "exclude" && (
+                                    <span className="fineprint">
+                                      Reviewed: excluded · {s.review.reason}
+                                    </span>
+                                  )}
+                                  {needsSheetDecision(s) &&
+                                    !(selections[plan.id] ?? []).includes(
+                                      s.page,
+                                    ) &&
+                                    s.review?.decision !== "exclude" && (
+                                      <span className="error-text">
+                                        Decision required before generation
+                                      </span>
+                                    )}
+                                  <button
+                                    onClick={() =>
+                                      setSource({
+                                        planId: plan.id,
+                                        page: s.page,
+                                      })
                                     }
-                                  />
-                                  <b>{s.sheet || `Page ${s.page}`}</b>
-                                </label>
-                                <span>
-                                  {sheetKind(s)} {s.scanned ? "· scan" : ""}{" "}
-                                  {s.ocr
-                                    ? `· OCR ${s.ocr.status === "complete" ? "read" : s.ocr.status}`
-                                    : ""}
-                                </span>
-                                {s.ocr?.status === "complete" && (
-                                  <span className="fineprint">
-                                    OCR title:{" "}
-                                    {s.ocr.lines
-                                      .slice(0, 3)
-                                      .map((line) => line.text)
-                                      .join(" · ")}
-                                  </span>
-                                )}
-                                {s.ocr?.error && (
-                                  <span className="error-text">
-                                    {s.ocr.error}
-                                  </span>
-                                )}
-                                <button
-                                  onClick={() =>
-                                    setSource({ planId: plan.id, page: s.page })
-                                  }
-                                >
-                                  View page {s.page} ↗
-                                </button>
-                              </div>
-                            ))}
+                                  >
+                                    View page {s.page} ↗
+                                  </button>
+                                  {needsSheetDecision(s) && (
+                                    <button
+                                      className="quiet"
+                                      disabled={
+                                        busy ||
+                                        plan.manifest?.indexingComplete ===
+                                          false
+                                      }
+                                      onClick={() =>
+                                        reviewSheet(
+                                          plan.id,
+                                          s.page,
+                                          s.review?.decision === "exclude"
+                                            ? "reset"
+                                            : "exclude",
+                                        )
+                                      }
+                                    >
+                                      {s.review?.decision === "exclude"
+                                        ? "Reopen review"
+                                        : "Reviewed: exclude"}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
                           </div>
                         </>
                       )}

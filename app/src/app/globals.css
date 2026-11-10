@@ -998,3 +998,14 @@ td button {
     padding: 18px;
   }
 }
+
+.sheet-review {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--yellow);
+  padding: 1rem;
+  margin: 1rem 0;
+  background: var(--paper);
+}
+.sheet-review h3 {
+  margin: 0;
+}
