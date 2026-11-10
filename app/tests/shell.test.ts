@@ -183,6 +183,7 @@ test("placed opening must fit the cited perimeter segment", () => {
       levelId: "L1",
       ring: 0,
       wallIndex: 0,
+      dimensionBasis: "unknown",
       offsetFraction: 0.2,
       width: measure(900, 1),
       height: measure(2100, 2),

@@ -1,3 +1,4 @@
+import { countRequestReservation } from "../src/lib/request-budget";
 /** Joint-sheet evaluation. Private artifacts only; never writes production or project revisions. */
 import OpenAI from "openai";
 import {
@@ -13,11 +14,14 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   extractShell,
+  buildShellRequest,
+  MAX_SHELL_PAGES,
   reserveShellCost,
   SHELL_PROMPT_VERSION,
 } from "../src/lib/shell-provider";
 import {
   extractShellDetail,
+  buildShellDetailRequest,
   reserveDetailCost,
   DETAIL_PROMPT_VERSION,
 } from "../src/lib/shell-detail-provider";
@@ -45,7 +49,7 @@ const manifest = z
       .array(
         z.object({
           id: z.string().regex(/^[a-z0-9-]+$/),
-          pages: z.array(z.string()).min(2).max(8),
+          pages: z.array(z.string()).min(2).max(MAX_SHELL_PAGES),
           baseModel: z.string().optional(),
           baseResult: z.string().optional(),
         }),
@@ -155,9 +159,23 @@ try {
       );
       continue;
     }
-    const reserved = details
-      ? reserveDetailCost(pages, base, baseDraft)
-      : reserveShellCost(pages);
+    const preflight = live
+      ? await countRequestReservation(
+          details
+            ? buildShellDetailRequest(
+                pages,
+                "evaluation-" + project.id,
+                base,
+                baseDraft,
+              )
+            : buildShellRequest(pages, "evaluation-" + project.id, project.id),
+        )
+      : null;
+    const reserved =
+      preflight?.reservedUsd ??
+      (details
+        ? reserveDetailCost(pages, base, baseDraft)
+        : reserveShellCost(pages));
     const record: any = {
       project: project.id,
       model: SOL_MODEL,
@@ -166,6 +184,10 @@ try {
       promptVersion,
       sourcePages: pages.map((p) => p.page),
       reservedUsd: reserved,
+      reservationMethod: live
+        ? "provider-token-count"
+        : "offline-conservative-upper-bound",
+      preflight,
       status: live ? "started" : "dry-run",
     };
     if (!live) {

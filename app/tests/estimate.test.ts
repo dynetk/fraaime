@@ -75,11 +75,14 @@ test("mock estimate reconciles rounded line costs, waste, contingency and markup
   s.contingencyPercent = 10;
   s.markupPercent = 20;
   const e = buildEstimate(m, s);
-  assert.equal(e.materials, 33);
-  assert.equal(e.direct, 133);
-  assert.equal(e.contingency, 13.3);
-  assert.equal(e.markup, 29.26);
-  assert.equal(e.total, 175.56);
+  assert.equal(e.materials, 44);
+  assert.equal(e.settings.rates.track, 2);
+  assert.equal(e.settings.rates.header, 2);
+  assert.equal(s.rates.track, 1, "legacy settings are not mutated");
+  assert.equal(e.direct, 144);
+  assert.equal(e.contingency, 14.4);
+  assert.equal(e.markup, 31.68);
+  assert.equal(e.total, 190.08);
   assert.equal(e.labor, 0);
   const midpoint = structuredClone(m);
   midpoint.components = [
@@ -89,7 +92,7 @@ test("mock estimate reconciles rounded line costs, waste, contingency and markup
     buildEstimate(midpoint, {
       ...s,
       wastePercent: 0,
-      rates: { ...s.rates, header: 5.5 },
+      rates: { ...s.rates, stud: 5.5 },
     }).materials,
     57.48,
   );

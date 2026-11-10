@@ -74,6 +74,9 @@ export const ShellDraft = z.object({
         wallIndex: z.number().int().nonnegative(),
         tag: z.string(),
         kind: z.enum(["door", "window"]),
+        dimensionBasis: z
+          .enum(["rough-opening", "unit", "unknown"])
+          .default("unknown"),
         offsetFraction: z.number().min(0).max(1),
         width: measurement,
         height: measurement,
@@ -517,6 +520,7 @@ export function compileShell(
       height,
       sill,
       operation: "",
+      dimensionBasis: o.dimensionBasis,
       evidence: ev,
       inferred: true,
     });

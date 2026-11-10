@@ -154,6 +154,14 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
     };
     globalThis.fetch = async (url, init) => {
       const request = JSON.parse(init!.body as string);
+      if (String(url).endsWith("/responses/input_tokens"))
+        return new Response(
+          JSON.stringify({
+            object: "response.input_tokens",
+            input_tokens: 5000,
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
       const isDetail = ["shell_details", "shell_openings"].includes(
         request.text.format.name,
       );
@@ -300,6 +308,16 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
         .rows[0].state,
       "failed",
     );
+    assert.match(
+      (await db.query<any>("SELECT error FROM jobs WHERE id=$1", [limited]))
+        .rows[0].error,
+      /reservation of \$0.25.*job has \$0.01/,
+    );
+    assert.equal(
+      (await db.query("SELECT id FROM ai_calls WHERE job_id=$1", [limited]))
+        .rows.length,
+      0,
+    );
     valid = false;
     const bad = await job();
     await processPlan(bad, "extract");
@@ -383,7 +401,7 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
       8,
       "failed detail call is never billed automatically again",
     );
-    const limitedDetail = await job(0.28);
+    const limitedDetail = await job(0.254);
     await processPlan(limitedDetail, "extract");
     assert.equal(
       calls,

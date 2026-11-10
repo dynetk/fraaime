@@ -1,4 +1,9 @@
 import { FatalError } from "workflow";
+import {
+  countRequestReservation,
+  budgetLimitMessage,
+} from "../lib/request-budget";
+import { processingErrorMessage } from "../lib/processing-error";
 import { database, now, uid } from "../lib/db";
 import {
   worker,
@@ -18,7 +23,7 @@ import { limit } from "../lib/config";
 import { aiSettings, tokenCost } from "../lib/ai-config";
 import {
   extractShell,
-  reserveShellCost,
+  buildShellRequest,
   MAX_SHELL_PAGES,
 } from "../lib/shell-provider";
 import { SOL_MODEL, usageCost } from "../lib/ai-config";
@@ -29,7 +34,7 @@ import {
 } from "../lib/shell-results";
 import {
   extractShellDetail,
-  reserveDetailCost,
+  buildShellDetailRequest,
 } from "../lib/shell-detail-provider";
 import { saveCandidate } from "../lib/revisions";
 import { needsTitleOcr, selectionWarnings } from "../lib/sheet-selection";
@@ -240,10 +245,21 @@ async function extractProjectShell(
     : undefined;
   if (detailStage && (!base || base.kind !== "project-shell"))
     throw new FatalError("Completed base shell required before details.");
-  const reserved = detailStage
-      ? reserveDetailCost(pages, base!.model, base!.draft)
-      : reserveShellCost(pages),
+  await phase(jobId, "Checking AI input size and budget");
+  const estimate = await countRequestReservation(
+    detailStage
+      ? buildShellDetailRequest(
+          pages,
+          j.plan_id,
+          base!.model,
+          base!.draft,
+          openingStage,
+        )
+      : buildShellRequest(pages, j.plan_id, name),
+  );
+  const reserved = estimate.reservedUsd,
     callId = uid();
+  console.log("Shell budget preflight", { jobId, checkpoint, ...estimate });
   await db.transaction(async (tx) => {
     await tx.query("SELECT id FROM spend_lock WHERE id=1 FOR UPDATE");
     const current = await tx.query<{ state: string }>(
@@ -268,14 +284,14 @@ async function extractProjectShell(
       "SELECT COALESCE(SUM(COALESCE(cost_usd,reserved_usd)),0) AS total FROM ai_calls WHERE job_id=$1",
       [jobId],
     );
-    if (
-      Number(monthly.rows[0].total) + reserved >
-        limit("MONTHLY_BUDGET_USD", 100) ||
-      Number(spent.rows[0].total) + reserved > Number(j.budget_usd)
-    )
-      throw new FatalError(
-        "Budget limit reached before joint shell extraction.",
-      );
+    const budgetError = budgetLimitMessage({
+      reserved,
+      jobSpent: Number(spent.rows[0].total),
+      jobBudget: Number(j.budget_usd),
+      monthlySpent: Number(monthly.rows[0].total),
+      monthlyBudget: limit("MONTHLY_BUDGET_USD", 100),
+    });
+    if (budgetError) throw new FatalError(budgetError);
     await tx.query(
       "INSERT INTO ai_calls(id,job_id,page,state,reserved_usd,model,created_at) VALUES($1,$2,$3,'started',$4,$5,$6)",
       [callId, jobId, checkpoint, reserved, SOL_MODEL, now()],
@@ -590,6 +606,6 @@ export async function processPlan(jobId: string, mode: "inspect" | "extract") {
     }
     await finish(jobId);
   } catch (e) {
-    await fail(jobId, e instanceof Error ? e.message : "Processing failed");
+    await fail(jobId, processingErrorMessage(e));
   }
 }

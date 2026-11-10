@@ -5,7 +5,7 @@ import { ExtractionFailure } from "./extraction";
 import { required } from "./config";
 import { aiSettings, tokenCost, SOL_MODEL, SOL_PRICING } from "./ai-config";
 import type { PageEvidence } from "./worker";
-export const SHELL_PROMPT_VERSION = "cross-sheet-shell-v2-height-scope";
+export const SHELL_PROMPT_VERSION = "cross-sheet-shell-v3-opening-basis";
 import { MAX_SHELL_PAGES } from "./sheet-selection";
 export { MAX_SHELL_PAGES } from "./sheet-selection";
 export function checkShellPages(pages: PageEvidence[]) {
@@ -38,21 +38,12 @@ export function reserveShellCost(pages: PageEvidence[]) {
     SOL_MODEL,
   );
 }
-export async function extractShell(
+export function buildShellRequest(
   pages: PageEvidence[],
   planId: string,
   name: string,
-) {
+): OpenAI.Responses.ResponseCreateParamsNonStreaming {
   checkShellPages(pages);
-  const settings = aiSettings({
-    OPENAI_MODEL: SOL_MODEL,
-    OPENAI_REASONING_EFFORT: "medium",
-  });
-  const client = new OpenAI({
-    apiKey: required("OPENAI_API_KEY"),
-    maxRetries: 0,
-    timeout: settings.timeoutMs,
-  });
   const content: OpenAI.Responses.ResponseInputContent[] = [];
   for (const p of pages) {
     content.push({
@@ -74,7 +65,7 @@ export async function extractShell(
         detail: "high",
       });
   }
-  const response = await client.responses.create({
+  return {
     model: SOL_MODEL,
     reasoning: { effort: "medium" },
     service_tier: "default",
@@ -84,10 +75,43 @@ export async function extractShell(
 Trace SIMPLE, useful exterior wall-centerline polygons from visible floor plans. Normalized points [x,y] are fractions of the FULL DISPLAYED PAGE (not each crop); x right, y down. Accurate visual tracing is allowed and always inferred/reviewable. Avoid hundreds of unnecessary points. Follow setbacks and wings; never replace an irregular building with a bounding rectangle. Distinguish enclosed rooms from exterior decks/terraces and site boundaries. Include interior COURTYARD/atrium void polygons, with inner perimeter walls. Exclude covered outdoor space from the enclosed footprint when indicated. Floor outlines come ONLY from floor plans, not elevations. Reconcile footprints across stories with one COMMON visible physical grid intersection/corner: anchorLabel must refer to the same physical location and be identical across levels; anchor is that point on each floor page. Use rotationDegrees only for a justified difference in plan orientation. Do not independently center each floor.
 For each level provide one scale calibration: a printed length in mm and the two corresponding dimension witness endpoints in normalized full-page coordinates. Pick a long clearly labeled dimension from the SAME plan viewport. The code computes mmPerPoint and converts all traced coordinates. Read actual wall height from explicit ceiling/top-of-wall/plate dimensions on vertical sheets, not ridge height. Only put readings of the SAME physical height/datum in one measurement. A local dropped ceiling, tray ceiling, garage ceiling, roof deck elevation, or another roof plane is a DIFFERENT quantity, not an alternative reading of the level wall height. Use an explicitly supported primary exterior plate/ceiling height for the level; describe local height variations and unmapped exterior wall-top changes as unresolved issues. If no representative exterior height is supported, leave it unresolved. Never mix local ceiling conditions into the primary height readings array. Provide separate consistent readings if repeated; estimated=false for explicit or arithmetically derived elevations/heights, with note showing the derivation. Measurement readings=[] means genuinely unresolved. Do not use tiny values or guessed standard heights. If wall thickness is not labeled, a calibrated estimate from its drawn double lines is permitted only with estimated=true and evidence; never present it as an engineered stud size.
 levels contains ENCLOSED stories only. A ROOF DECK is not another enclosed story. Represent a supported roof deck as a roof surface with a clear label. Roof vertices use normalized points in the referenced level's FLOOR-PLAN coordinate frame, with absolute elevation in the project datum derived from vertical sheets; align roof plan grids before transferring points. Use simple planes where supported; omit unsupported roof parts with issues. Do not cap courtyard openings. Do not fabricate a roof just to close the model.
-The compiler makes walls around each outline and void ring. ring=0 refers to outline, ring=1 to first void. wallIndex is zero-based start vertex index, segment goes to next vertex. Place doors/windows only when plan location AND dimensions/sill can be linked across sources. offsetFraction is left jamb measured from that segment START, not center; ensure opening fits below wall top. Keep unplaced source schedule rows with nullable fields in scheduleEntries, distinct from placed instances. Repeated type quantity does not create invented placements. Do not create detailed framing. Keep response compact. All geometry inferred=true and every issue unresolved. Prioritize a coherent source-linked shell over optional detail.`,
+The compiler makes walls around each outline and void ring. ring=0 refers to outline, ring=1 to first void. wallIndex is zero-based start vertex index, segment goes to next vertex. Place doors/windows only when plan location AND dimensions/sill can be linked across sources. offsetFraction is left jamb measured from that segment START, not center; ensure opening fits below wall top. Keep unplaced source schedule rows with nullable fields in scheduleEntries, distinct from placed instances. Repeated type quantity does not create invented placements. Distinguish rough-opening dimensions from door/window unit sizes: dimensionBasis=rough-opening only when the dimensions are explicitly for the framed opening, unit for product sizes, otherwise unknown. Cite the dimension basis. Never add an assumed installation clearance or claim a unit size is a rough opening. Keep unresolved rough-opening sizing in issues. Do not create detailed framing. Keep response compact. All geometry inferred=true and every issue unresolved. Prioritize a coherent source-linked shell over optional detail.`,
     input: [{ role: "user", content }],
-    text: { format: zodTextFormat(ShellDraft, "project_shell") },
+    text: {
+      format: zodTextFormat(
+        ShellDraft.extend({
+          openings: ShellDraft.shape.openings.element
+            .extend({
+              dimensionBasis:
+                ShellDraft.shape.openings.element.shape.dimensionBasis.removeDefault(),
+            })
+            .array()
+            .max(300),
+        }),
+        "project_shell",
+      ),
+    },
+  };
+}
+export async function extractShell(
+  pages: PageEvidence[],
+  planId: string,
+  name: string,
+) {
+  checkShellPages(pages);
+  const settings = aiSettings({
+    OPENAI_MODEL: SOL_MODEL,
+    OPENAI_REASONING_EFFORT: "medium",
   });
+  const client = new OpenAI({
+    apiKey: required("OPENAI_API_KEY"),
+    maxRetries: 0,
+    timeout: settings.timeoutMs,
+  });
+  const response = await client.responses.create(
+    buildShellRequest(pages, planId, name),
+  );
+
   const usage = response.usage
     ? {
         inputTokens: response.usage.input_tokens,

@@ -31,8 +31,8 @@ export const MOCK_ESTIMATE_SETTINGS: EstimateSettings = {
   includeLabor: true,
   rates: {
     stud: 2.4,
-    track: 1.65,
-    header: 5.5,
+    track: 2.4,
+    header: 2.4,
     joist: 4.2,
     wallLabor: 1.25,
     floorLabor: 1.5,
