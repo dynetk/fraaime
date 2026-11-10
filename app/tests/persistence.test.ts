@@ -1,3 +1,4 @@
+import { buildEstimate } from "../src/lib/estimate";
 import { MOCK_ESTIMATE_SETTINGS } from "../src/lib/estimate-settings";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -75,6 +76,7 @@ test("revision transactions prevent stale overwrites and keep reruns separate", 
   assert.deepEqual(saved.rows[0].model, {
     ...clean,
     estimate: MOCK_ESTIMATE_SETTINGS,
+    panelQuantities: buildEstimate(clean).wallPanels,
   });
   assert.equal(saved.rows[0].reviewed, true);
   await db.close?.();

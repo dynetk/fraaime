@@ -279,7 +279,11 @@ export default function ModelViewer(props: Props) {
                 .filter((v) => v.kind === kind)
                 .map((v) =>
                   new THREE.Matrix4().compose(
-                    new THREE.Vector3(v.x / 1000 - len / 2, v.y / 1000, 0),
+                    new THREE.Vector3(
+                      v.x / 1000 - len / 2,
+                      v.y / 1000,
+                      (v.depthOffset ?? 0) / 1000,
+                    ),
                     new THREE.Quaternion().setFromAxisAngle(
                       new THREE.Vector3(0, 0, 1),
                       v.pitch ?? 0,
@@ -287,7 +291,7 @@ export default function ModelViewer(props: Props) {
                     new THREE.Vector3(
                       v.width / 1000,
                       v.height / 1000,
-                      w.thickness / 1000,
+                      (v.depth ?? w.thickness) / 1000,
                     ),
                   ),
                 ),

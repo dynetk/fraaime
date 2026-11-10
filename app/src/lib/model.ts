@@ -109,6 +109,28 @@ export const ExtractionModelSchema = z.object({
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
   estimate: EstimateSettingsSchema.optional(),
+  panelQuantities: z
+    .array(
+      z.object({
+        wallId: z.string(),
+        label: z.string(),
+        source: z.string(),
+        studLinearFeet: z.number().nonnegative(),
+        trackLinearFeet: z.number().nonnegative(),
+        totalLinearFeet: z.number().nonnegative(),
+        openingSizesToVerify: z.number().int().nonnegative(),
+        headersToReview: z.number().int().nonnegative(),
+      }),
+    )
+    .max(3000)
+    .optional(),
+  openings: z
+    .array(
+      Opening.extend({
+        dimensionBasis: z.enum(["rough-opening", "unit", "unknown"]).optional(),
+      }),
+    )
+    .max(5000),
   components: z
     .array(Component.extend({ pitch: z.number().min(-90).max(90).optional() }))
     .max(3000),

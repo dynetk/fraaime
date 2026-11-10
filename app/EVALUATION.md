@@ -158,3 +158,9 @@ New hosted jobs with both shell flags enabled run a base shell, wall/roof detail
 Suggested sheets now include recognized opening schedules and all primary architectural plans/elevations/sections, plus available cover, slab and roof-framing support within 24 pages. If primary sheets exceed the limit, the UI requires a deliberate selection instead of silently dropping them. Existing selections are retained; use **Use suggested sheets** to refresh them. OCR failures still require review or retry.
 
 The detail contract supports independent exterior/garden enclosures without expanding the floor footprint, and source-backed piecewise wall-top profiles. Solid walls, studs, tracks, quantities and editable members use these profiles. Schedule entries with no or too few matching openings produce review warnings. These checks improve completeness detection; only source-sheet review establishes geometric accuracy. No new paid plan extraction was run for this release.
+
+### Request budget preflight
+
+Production shell, wall/roof detail and opening reconciliation count their complete Responses request through `/responses/input_tokens` before reserving spend. This includes images, native text, prior-model context, instructions and JSON schema. Reservations use counted input + 10% + 1,024 tokens and the full 24,000-token output limit, without cache discounts and with applicable long-context pricing. Actual reported usage replaces the reservation after a completed response. Job/account limits and uncertain-call protection remain enforced. Token-count errors stop before generation; budget failures report the relevant remaining limit.
+
+The live shell evaluation harness uses the same preflight. Its offline dry run is explicitly a conservative upper bound, not a charge or predicted actual usage. Human edits and existing extraction checkpoints are preserved.

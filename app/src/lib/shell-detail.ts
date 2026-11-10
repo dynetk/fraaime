@@ -54,6 +54,9 @@ export const ShellDetailDraft = z.object({
         tag: z.string(),
         kind: z.enum(["door", "window"]),
         wallId: z.string(),
+        dimensionBasis: z
+          .enum(["rough-opening", "unit", "unknown"])
+          .default("unknown"),
         center: point,
         width: dimension,
         height: dimension,
@@ -114,7 +117,15 @@ export const ShellDetailDraft = z.object({
   issues: z.array(z.object({ id: z.string(), message: z.string() })).max(100),
 });
 // Strict API schema requires new fields; stored v1 checkpoints can omit them.
+const StrictOpenings = ShellDetailDraft.shape.openings.element
+  .extend({
+    dimensionBasis:
+      ShellDetailDraft.shape.openings.element.shape.dimensionBasis.removeDefault(),
+  })
+  .array()
+  .max(250);
 export const DetailResponseSchema = ShellDetailDraft.extend({
+  openings: StrictOpenings,
   exteriorWalls: ShellDetailDraft.shape.exteriorWalls.removeDefault(),
   wallTops: ShellDetailDraft.shape.wallTops.removeDefault(),
 });
@@ -122,7 +133,7 @@ export const OpeningResponseSchema = ShellDetailDraft.pick({
   version: true,
   openings: true,
   issues: true,
-});
+}).extend({ openings: StrictOpenings });
 export type ShellDetailData = z.infer<typeof ShellDetailDraft>;
 type P = number[];
 const distance = (a: P, b: P) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -630,6 +641,7 @@ export function compileShellDetail(
       height,
       sill,
       operation: "",
+      dimensionBasis: o.dimensionBasis,
       inferred: true,
       evidence,
     });

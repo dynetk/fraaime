@@ -92,7 +92,14 @@ export default function EstimatePanel({
   }, [model]);
   const estimate = result.estimate;
   const changeRate = (key: keyof EstimateSettings["rates"], value: number) =>
-    onSettings({ ...settings, rates: { ...settings.rates, [key]: value } });
+    onSettings({
+      ...settings,
+      rates: {
+        ...settings.rates,
+        [key]: value,
+        ...(key === "stud" ? { track: value, header: value } : {}),
+      },
+    });
   const download = (format: "csv" | "json") => {
     if (!estimate) return;
     const payload =
@@ -182,6 +189,52 @@ export default function EstimatePanel({
               </small>
             </div>
           </div>
+          <details>
+            <summary>Wall panel quantities · linear feet before waste</summary>
+            <p className="fineprint">
+              Stud totals include both C members in each box header. Tracks are
+              shown separately and in the combined total, at one shared price
+              per linear foot. Door/window unit sizes are used as provisional
+              framing openings without manufacturer clearance. Header profiles
+              are schematic.
+            </p>
+            <div style={{ overflowX: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Panel</th>
+                    <th>Studs + header studs</th>
+                    <th>Tracks</th>
+                    <th>Total LF</th>
+                    <th>Review</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {estimate.wallPanels.map((panel) => (
+                    <tr key={panel.wallId}>
+                      <td>{panel.label}</td>
+                      <td>{panel.studLinearFeet.toFixed(2)}</td>
+                      <td>{panel.trackLinearFeet.toFixed(2)}</td>
+                      <td>{panel.totalLinearFeet.toFixed(2)}</td>
+                      <td>
+                        {panel.openingSizesToVerify} opening sizes ·{" "}
+                        {panel.headersToReview} header fits
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+          {(estimate.openingSizesToVerify > 0 ||
+            estimate.headersToReview > 0) && (
+            <p className="estimate-caution">
+              Framing review: {estimate.openingSizesToVerify} opening sizes have
+              an unknown dimension basis (modeled sizes are used without
+              clearance); {estimate.headersToReview} headers need a height/fit
+              check.
+            </p>
+          )}
           {!estimate.quantities.length && (
             <p className="notice">
               No framing quantities in the selected scope. Add walls or framing
@@ -267,9 +320,7 @@ export default function EstimatePanel({
           <div className="estimate-input-grid">
             {(
               [
-                ["stud", "Studs · $/LF"],
-                ["track", "Tracks · $/LF"],
-                ["header", "Headers · $/LF"],
+                ["stud", "Wall studs, tracks & headers · $/LF"],
                 ["joist", "Joists / perimeter · $/LF"],
                 ["wallLabor", "Wall installation · $/SF"],
                 ["floorLabor", "Floor installation · $/SF"],

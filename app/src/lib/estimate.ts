@@ -1,6 +1,12 @@
 import { wallArea as profiledWallArea } from "./model";
-import { length, type BuildingModel } from "./model";
-import { wallFraming, polygonFraming, roofHeight } from "./framing";
+import { length, minimumWallTop, type BuildingModel } from "./model";
+import {
+  wallFraming,
+  polygonFraming,
+  roofHeight,
+  FRAMING_TEMPLATE_VERSION,
+  BOX_HEADER_WEB,
+} from "./framing";
 import {
   EstimateSettingsSchema,
   MOCK_ESTIMATE_SETTINGS,
@@ -40,6 +46,7 @@ export type EstimateLine = {
 export const ESTIMATE_EXCLUSIONS = [
   "Fictional prices and illustrative framing quantities; not a supplier quote, engineered takeoff, or cost to build the whole project.",
   "No specified steel grade/gauge, stock-length optimization, connectors, fasteners, bracing, sheathing, foundations, roof covering, doors/windows, finishes, MEP, engineering, permits, or tax.",
+  "Opening framing uses modeled dimensions without an invented unit-to-rough-opening allowance. Per the pilot assumption, door/window unit dimensions are used as provisional framing openings with no added manufacturer clearance. Box headers use two schematic 6-inch C webs and two U tracks matching wall depth; steel gauge, flanges, bearing and connection design are unresolved.",
   "Opening products and unplaced schedule rows are excluded. Openings only affect the framing preview around them.",
   "Floor/roof perimeter pieces use the same mock joist rate. Roof decks are excluded from automatic roof framing. Manual framing members are always included; generic boxes are unpriced.",
   "Wall labor uses gross wall area, without subtracting openings. Floor/roof labor uses net modeled area. Standalone manual-member installation is not quantified separately.",
@@ -71,6 +78,9 @@ export function buildEstimate(
 ) {
   const settings = EstimateSettingsSchema.parse(input),
     quantities: Quantity[] = [];
+  // Lorenzo: wall studs, tracks and header C members share one LF price.
+  settings.rates.track = settings.rates.stud;
+  settings.rates.header = settings.rates.stud;
   const add = (
     elementId: string,
     label: string,
@@ -240,7 +250,48 @@ export function buildEstimate(
     Math.round(total * 100) > Number.MAX_SAFE_INTEGER
   )
     throw new Error("Estimate exceeds the supported calculation range.");
+  const byElement = new Map<string, Quantity[]>();
+  for (const q of quantities) {
+    const list = byElement.get(q.elementId) ?? [];
+    list.push(q);
+    byElement.set(q.elementId, list);
+  }
+  const wallPanels = model.walls.map((wall) => {
+    const assembly = customWalls.get(wall.id);
+    const ids = new Set(assembly?.componentIds ?? [wall.id]);
+    const members = [...ids].flatMap((id) => byElement.get(id) ?? []);
+    const sum = (kinds: Kind[]) =>
+      round(
+        members
+          .filter((q) => kinds.includes(q.kind))
+          .reduce((s, q) => s + q.lengthFt, 0),
+      );
+    const openings = model.openings.filter((o) => o.wallId === wall.id);
+    return {
+      wallId: wall.id,
+      label: wall.label,
+      source: assembly ? "saved custom members" : FRAMING_TEMPLATE_VERSION,
+      studLinearFeet: sum(["stud", "header"]),
+      trackLinearFeet: sum(["track"]),
+      totalLinearFeet: sum(["stud", "header", "track"]),
+      openingSizesToVerify: openings.filter(
+        (o) => !o.dimensionBasis || o.dimensionBasis === "unknown",
+      ).length,
+      headersToReview: openings.filter(
+        (o) =>
+          o.sill + o.height + BOX_HEADER_WEB + 38 >
+          minimumWallTop(wall, o.offset, o.offset + o.width),
+      ).length,
+    };
+  });
   return {
+    wallPanels,
+    framingTemplate: FRAMING_TEMPLATE_VERSION,
+    openingSizesToVerify: wallPanels.reduce(
+      (s, p) => s + p.openingSizesToVerify,
+      0,
+    ),
+    headersToReview: wallPanels.reduce((s, p) => s + p.headersToReview, 0),
     version: 1 as const,
     label: "MOCK PRICING — PRELIMINARY FRAMING ESTIMATE",
     currency: "USD",
@@ -322,6 +373,29 @@ export function estimateCsv(
     ["Assumptions and exclusions"],
   );
   for (const text of estimate.exclusions) rows.push([text]);
+  rows.push(
+    [],
+    ["Wall panel linear feet — before waste"],
+    [
+      "Wall",
+      "Studs incl. header C members LF",
+      "Tracks LF",
+      "Total LF",
+      "Opening sizes to verify",
+      "Header fit checks",
+      "Template/source",
+    ],
+  );
+  for (const p of estimate.wallPanels)
+    rows.push([
+      p.label,
+      p.studLinearFeet,
+      p.trackLinearFeet,
+      p.totalLinearFeet,
+      p.openingSizesToVerify,
+      p.headersToReview,
+      p.source,
+    ]);
   rows.push(
     [],
     ["Quantity detail — illustrative geometry, not stock orders"],

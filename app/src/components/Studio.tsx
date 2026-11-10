@@ -625,13 +625,14 @@ export default function Studio() {
                     <div className="framing-note">
                       <strong>Illustrative framing</strong> · Studs, tracks,
                       opening headers, and floor joists generated from the
-                      shell. Spacing and member sizes are preview assumptions,
-                      not engineered specifications. Click a stud, track, or
-                      header to edit that member. First selection saves that
-                      wall’s layout as individual components; spacing and
-                      opening changes no longer regenerate it. Floor and roof
-                      members still select their assembly. Save your changes
-                      before leaving.
+                      shell. Opening cripple studs start at the center, at 16
+                      inches maximum, with a four-piece box header. Spacing and
+                      member sizes are preview assumptions, not engineered
+                      specifications. Click a stud, track, or header to edit
+                      that member. First selection saves that wall’s layout as
+                      individual components; spacing and opening changes no
+                      longer regenerate it. Floor and roof members still select
+                      their assembly. Save your changes before leaving.
                       <div className="frame-legend">
                         <span>● Studs</span>
                         <span>● Tracks / joists</span>
@@ -903,6 +904,31 @@ export default function Studio() {
                                   ))}
                                 </select>
                               </label>
+                              <label className="field">
+                                Opening dimension basis
+                                <select
+                                  value={opening.dimensionBasis ?? "unknown"}
+                                  onChange={(e) =>
+                                    patch({ dimensionBasis: e.target.value })
+                                  }
+                                >
+                                  <option value="unknown">
+                                    Unknown basis — use modeled size
+                                  </option>
+                                  <option value="unit">
+                                    Door/window unit size — no added allowance
+                                  </option>
+                                  <option value="rough-opening">
+                                    Confirmed rough-opening size
+                                  </option>
+                                </select>
+                              </label>
+                              <p className="fineprint">
+                                Door/window unit sizes are used as provisional
+                                framing openings without added clearance. Select
+                                confirmed only when the plans explicitly provide
+                                rough-opening dimensions.
+                              </p>
                               {field("Offset from start", opening.offset, (n) =>
                                 patch({ offset: n }),
                               )}

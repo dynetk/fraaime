@@ -30,18 +30,22 @@ export function editWallMember(
   );
   const components = pieces.map((p, i) => ({
     id: crypto.randomUUID(),
-    label: `${wall.label} · ${p.kind} ${i + 1}`,
+    label: `${wall.label} · ${p.role ?? p.kind} ${i + 1}`,
     evidence: structuredClone(wall.evidence),
     inferred: true,
     levelId: wall.levelId,
     kind: p.kind,
     center: [
-      wall.start[0] + Math.cos(angle) * p.x,
-      wall.start[1] + Math.sin(angle) * p.x,
+      wall.start[0] +
+        Math.cos(angle) * p.x -
+        Math.sin(angle) * (p.depthOffset ?? 0),
+      wall.start[1] +
+        Math.sin(angle) * p.x +
+        Math.cos(angle) * (p.depthOffset ?? 0),
     ],
     elevation: p.y - p.height / 2,
     length: p.width,
-    depth: wall.thickness,
+    depth: p.depth ?? wall.thickness,
     height: p.height,
     rotation: (angle * 180) / Math.PI,
     ...(p.pitch ? { pitch: (p.pitch * 180) / Math.PI } : {}),
@@ -69,7 +73,7 @@ export function resetWallFraming(
 }
 
 // Display geometry only. These dimensions are visualization assumptions, not
-// member sizing, load paths, fabrication information, or a material takeoff.
+// member sizing, load paths, fabrication information, or an engineered takeoff.
 export type FramePiece = {
   x: number;
   y: number;
@@ -77,8 +81,14 @@ export type FramePiece = {
   height: number;
   kind: "stud" | "track" | "header";
   pitch?: number;
+  depth?: number;
+  depthOffset?: number;
+  role?: string;
 };
 export const MEMBER_FACE = 38;
+export const STANDARD_SPACING = 406.4;
+export const BOX_HEADER_WEB = 152.4; // Lorenzo: 6-inch header C-profile web.
+export const FRAMING_TEMPLATE_VERSION = "lorenzo-openings-v1";
 
 export function wallFraming(
   wall: WallData,
@@ -104,6 +114,7 @@ export function wallFraming(
     x1: number,
     y1: number,
     kind: FramePiece["kind"],
+    metadata: Pick<FramePiece, "depth" | "depthOffset" | "role"> = {},
   ) => {
     let rectangles = [
       {
@@ -140,6 +151,7 @@ export function wallFraming(
           width: r.b - r.a,
           height: r.d - r.c,
           kind,
+          ...metadata,
         });
   };
   add(0, 0, span, face, "track");
@@ -169,11 +181,60 @@ export function wallFraming(
   for (const h of holes) {
     positions.add(h.left - face / 2);
     positions.add(h.right + face / 2);
-    add(h.left - face, h.top, h.right + face, h.top + face * 2, "header");
+    // Four individually editable lengths: two C webs and two U tracks.
+    // C-section flanges/gauge and connection details remain schematic.
+    const depth = Math.min(face, wall.thickness / 2);
+    const headerTop = h.top + BOX_HEADER_WEB;
+    for (const side of [-1, 1])
+      add(h.left, h.top, h.right, headerTop, "header", {
+        depth,
+        depthOffset: (side * (wall.thickness - depth)) / 2,
+        role: "box header C stud",
+      });
+    add(h.left, h.top, h.right, h.top + face, "track", {
+      role: "box header bottom U track",
+    });
+    add(h.left, headerTop - face, h.right, headerTop, "track", {
+      role: "box header top U track",
+    });
     if (h.bottom > face)
-      add(h.left, h.bottom - face, h.right, h.bottom, "track");
+      add(h.left, h.bottom - face, h.right, h.bottom, "track", {
+        role: "window sill U track",
+      });
+    // A center-out grid replaces the wall grid over and below each opening.
+    // Both window bands share the same centers; never exceed 16 inches.
+    const step = Math.min(spacing, STANDARD_SPACING),
+      center = (h.left + h.right) / 2;
+    const centers = [center];
+    for (let d = step; center - d - face / 2 >= h.left; d += step)
+      centers.push(center - d);
+    for (let d = step; center + d + face / 2 <= h.right; d += step)
+      centers.push(center + d);
+    for (const x of centers) {
+      add(
+        x - face / 2,
+        headerTop,
+        x + face / 2,
+        Math.min(wallTop(wall, x - face / 2), wallTop(wall, x + face / 2)) -
+          face,
+        "stud",
+        { role: "upper cripple stud" },
+      );
+      if (h.bottom > face)
+        add(x - face / 2, face, x + face / 2, h.bottom - face, "stud", {
+          role: "lower cripple stud",
+        });
+    }
   }
-  for (const x of positions)
+  for (const x of positions) {
+    // Skip full studs that enter an opening's horizontal band; its centered
+    // cripple grid supplies the material above/below instead of doubling it.
+    if (
+      holes.some(
+        (h) => x + face / 2 > h.left + 0.1 && x - face / 2 < h.right - 0.1,
+      )
+    )
+      continue;
     add(
       x - face / 2,
       face,
@@ -181,6 +242,7 @@ export function wallFraming(
       Math.min(wallTop(wall, x - face / 2), wallTop(wall, x + face / 2)) - face,
       "stud",
     );
+  }
   return result;
 }
 
