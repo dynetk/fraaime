@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { openLocal, uid, now } from "../src/lib/db";
 import { POST } from "../src/app/api/[...path]/route";
-test("API blocks unreviewed extraction before creating jobs or calling AI", async () => {
+test("API allows suggested sheets despite unselected unclassified pages", async () => {
   const db = await openLocal(),
     g = globalThis as any,
     old = g.fraaimeDb;
   const oldLocal = process.env.FRAAIME_LOCAL_MODE,
-    oldOrigin = process.env.APP_ORIGIN;
+    oldOrigin = process.env.APP_ORIGIN,
+    oldKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
   g.fraaimeDb = Promise.resolve(db);
   process.env.FRAAIME_LOCAL_MODE = "1";
   process.env.APP_ORIGIN = "http://localhost:5190";
@@ -38,7 +40,7 @@ test("API blocks unreviewed extraction before creating jobs or calling AI", asyn
       ],
     );
     await db.query(
-      "INSERT INTO jobs(id,project_id,plan_id,state,phase,budget_usd,created_at,updated_at) VALUES($1,$2,$3,'needs_review','Ready',10,$4,$4)",
+      "INSERT INTO jobs(id,project_id,plan_id,state,phase,budget_usd,created_at,updated_at) VALUES($1,$2,$3,'needs_selection','Ready',10,$4,$4)",
       [job, project, plan, now()],
     );
     const post = (path: string, body: unknown) =>
@@ -52,9 +54,13 @@ test("API blocks unreviewed extraction before creating jobs or calling AI", asyn
           body: JSON.stringify(body),
         }),
       );
-    const blocked = await post(`jobs/${job}/new`, { pages: [1] });
-    assert.equal(blocked.status, 409);
-    assert.match(JSON.stringify(await blocked.json()), /Review 1 unclassified/);
+    const allowed = await post(`jobs/${job}/run`, { pages: [1] });
+    // Reaches provider configuration instead of the removed review gate. No paid call.
+    assert.equal(allowed.status, 503);
+    assert.match(
+      JSON.stringify(await allowed.json()),
+      /OpenAI is not configured/,
+    );
     assert.equal((await db.query("SELECT id FROM jobs")).rows.length, 1);
     const saved = await post(`plans/${plan}/review`, {
       page: 2,
@@ -78,6 +84,8 @@ test("API blocks unreviewed extraction before creating jobs or calling AI", asyn
     else process.env.FRAAIME_LOCAL_MODE = oldLocal;
     if (oldOrigin === undefined) delete process.env.APP_ORIGIN;
     else process.env.APP_ORIGIN = oldOrigin;
+    if (oldKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = oldKey;
     await db.close?.();
   }
 });

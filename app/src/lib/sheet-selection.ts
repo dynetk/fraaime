@@ -197,18 +197,15 @@ export function selectionWarnings(manifest: Manifest | null, pages: number[]) {
     : [];
 }
 
-export function needsSheetDecision(sheet: Sheet) {
+export function isUnclassifiedSheet(sheet: Sheet) {
   return !SHELL_SHEET_KINDS.some((kind) => kind === sheetKind(sheet));
 }
-/** Unknown pages need an explicit disposition; selecting a page includes its evidence. */
-export function pendingSheetReview(
+/** Unselected unknown pages are optional evidence, never a processing gate. */
+export function optionalSheetPages(
   manifest: Manifest | null,
   selected: number[],
 ) {
   return (manifest?.sheets ?? []).filter(
-    (s) =>
-      needsSheetDecision(s) &&
-      !selected.includes(s.page) &&
-      s.review?.decision !== "exclude",
+    (s) => isUnclassifiedSheet(s) && !selected.includes(s.page),
   );
 }

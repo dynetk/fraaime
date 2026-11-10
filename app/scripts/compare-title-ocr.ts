@@ -6,7 +6,7 @@ import {
   sheetKind,
   needsTitleOcr,
   suggestedPlanPages,
-  pendingSheetReview,
+  optionalSheetPages,
 } from "../src/lib/sheet-selection";
 const [baseline, updated, reference] = process.argv.slice(2);
 if (!reference)
@@ -62,7 +62,7 @@ for (const c of native) {
       wrongCoreKinds: Object.entries(ref.core)
         .filter(([p, k]) => sheetKind(sheets[Number(p) - 1]) !== k)
         .map(([p]) => Number(p)),
-      unclassifiedReviewCount: pendingSheetReview(manifest, selected).length,
+      unclassifiedReviewCount: optionalSheetPages(manifest, selected).length,
       selectedKinds: selected.map((page) => ({
         page,
         kind: sheetKind(sheets[page - 1]),

@@ -101,7 +101,7 @@ Version 2 reads smaller title-block and sheet-edge crops before a bounded low-re
 
 New indexing uses v2. Retry indexing upgrades old failed/unreadable title results, while retaining successful results and human review decisions. The app accepts v1 and v2 during staged deployment. The PDF worker must be redeployed as well as the web app.
 
-Every unclassified page must be selected for evidence or explicitly excluded before a fresh extraction starts. An exclusion requires a reason, is saved against the immutable plan revision, and records reviewer/time in the audit trail. Included unclassified pages remain selectable even when title reading fails. Review decisions survive reload and OCR retries; **Reopen review** makes an excluded page pending again. Both the UI and the authenticated server enforce the gate. Existing extraction checkpoints retain their original sheets when resumed; changing sheets requires a new draft.
+Unclassified pages are unselected by default. Suggested sheets can be processed without reviewing or explicitly excluding the rest of the PDF. The optional drawing list keeps unknown/OCR-failed pages visible; selecting a checkbox includes that page as evidence despite title-reading failure. Checkbox choices are saved against the plan revision and survive reloads and OCR retries. Existing exclusions remain respected. There is no unclassified-page gate in the UI or API. Existing extraction checkpoints retain their original sheets when resumed; changing sheets requires a new draft.
 
 Run a title-only comparison without paid AI calls:
 
