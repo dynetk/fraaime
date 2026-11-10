@@ -109,10 +109,30 @@ export const ExtractionModelSchema = z.object({
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
   estimate: EstimateSettingsSchema.optional(),
+  components: z
+    .array(Component.extend({ pitch: z.number().min(-90).max(90).optional() }))
+    .max(3000),
   walls: z
     .array(
       Wall.extend({
         role: z.enum(["exterior", "courtyard", "interior"]).optional(),
+        topProfile: z
+          .array(
+            z.tuple([
+              z.number().min(0).max(1),
+              z.number().positive().max(30000),
+            ]),
+          )
+          .min(2)
+          .max(20)
+          .refine(
+            (p) =>
+              p[0][0] === 0 &&
+              p[p.length - 1][0] === 1 &&
+              p.every((v, i) => i === 0 || v[0] > p[i - 1][0]),
+            "Wall top must have increasing fractions from 0 to 1",
+          )
+          .optional(),
       }),
     )
     .max(3000),
@@ -156,7 +176,7 @@ export const ModelSchema = ExtractionModelSchema.extend({
     .optional(),
 });
 export type BuildingModel = z.infer<typeof ModelSchema>;
-export type WallData = z.infer<typeof Wall>;
+export type WallData = BuildingModel["walls"][number];
 export type OpeningData = z.infer<typeof Opening>;
 export type ModelIssue = z.infer<typeof Issue>;
 export function blankModel(name = "Untitled project"): BuildingModel {
@@ -175,6 +195,41 @@ export function blankModel(name = "Untitled project"): BuildingModel {
 }
 export const length = (w: WallData) =>
   Math.hypot(w.end[0] - w.start[0], w.end[1] - w.start[1]);
+export function wallTop(w: WallData, offset: number) {
+  const profile = w.topProfile ?? [
+    [0, w.height],
+    [1, w.height],
+  ];
+  const f = Math.max(0, Math.min(1, offset / (length(w) || 1)));
+  for (let i = 1; i < profile.length; i++)
+    if (f <= profile[i][0]) {
+      const a = profile[i - 1],
+        b = profile[i];
+      return a[1] + ((b[1] - a[1]) * (f - a[0])) / (b[0] - a[0]);
+    }
+  return profile[profile.length - 1][1];
+}
+export function minimumWallTop(w: WallData, start: number, end: number) {
+  return Math.min(
+    wallTop(w, start),
+    wallTop(w, end),
+    ...(w.topProfile ?? [])
+      .filter(([f]) => f * length(w) > start && f * length(w) < end)
+      .map(([, h]) => h),
+  );
+}
+export function wallArea(w: WallData) {
+  const p = w.topProfile ?? [
+    [0, w.height],
+    [1, w.height],
+  ];
+  return (
+    length(w) *
+    p
+      .slice(1)
+      .reduce((n, b, i) => n + ((b[0] - p[i][0]) * (b[1] + p[i][1])) / 2, 0)
+  );
+}
 export function validateModel(model: BuildingModel): ModelIssue[] {
   const issues: ModelIssue[] = [];
   const add = (
@@ -235,7 +290,7 @@ export function validateModel(model: BuildingModel): ModelIssue[] {
     if (o.levelId !== w.levelId) add(o.id, "Opening and wall levels disagree.");
     if (o.offset + o.width > length(w) + 1)
       add(o.id, "Opening exceeds wall length.");
-    if (o.sill + o.height > w.height + 1)
+    if (o.sill + o.height > minimumWallTop(w, o.offset, o.offset + o.width) + 1)
       add(o.id, "Opening exceeds wall height.");
   }
   for (const w of model.walls) {
@@ -289,6 +344,7 @@ export function wallPieces(w: WallData, openings: OpeningData[]) {
     ...new Set([
       0,
       len,
+      ...(w.topProfile ?? []).map((p) => p[0] * len),
       ...os.flatMap((o) => [
         Math.max(0, Math.min(len, o.offset)),
         Math.max(0, Math.min(len, o.offset + o.width)),
@@ -310,7 +366,39 @@ export function wallPieces(w: WallData, openings: OpeningData[]) {
     }
     if (bottom < w.height) pieces.push({ a, b, bottom, top: w.height });
   }
-  return pieces.filter((p) => p.b - p.a > 1 && p.top - p.bottom > 1);
+  return pieces
+    .flatMap((p) => {
+      if (!w.topProfile) return [p];
+      // Split where a sloped top crosses the horizontal bottom/top of this piece.
+      const ha = wallTop(w, p.a),
+        hb = wallTop(w, p.b),
+        split = [p.a, p.b];
+      for (const y of [p.bottom, p.top])
+        if (ha !== hb) {
+          const x = p.a + ((p.b - p.a) * (y - ha)) / (hb - ha);
+          if (x > p.a && x < p.b) split.push(x);
+        }
+      split.sort((a, b) => a - b);
+      return split.slice(1).map((b, i) => ({
+        ...p,
+        a: split[i],
+        b,
+        topA: Math.max(p.bottom, Math.min(p.top, wallTop(w, split[i]))),
+        topB: Math.max(p.bottom, Math.min(p.top, wallTop(w, b))),
+      }));
+    })
+    .filter(
+      (p) =>
+        p.b - p.a > 1 &&
+        ("topA" in p
+          ? Math.max(
+              p.topA as number,
+              ("topB" in p ? p.topB : p.topA) as number,
+            )
+          : p.top) -
+          p.bottom >
+          1,
+    );
 }
 export function exampleModel(): BuildingModel {
   const m = blankModel("Sample courtyard house");

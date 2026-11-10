@@ -24,6 +24,7 @@ import {
   suggestedPlanPages,
   SHELL_SHEET_KINDS,
   MAX_SHELL_PAGES,
+  selectionWarnings,
 } from "@/lib/sheet-selection";
 const Viewer = dynamic(() => import("./ModelViewer"), {
   ssr: false,
@@ -1138,7 +1139,7 @@ export default function Studio() {
                   <h2>Source sheets & processing</h2>
                   <p>
                     {session?.shellFusion
-                      ? "Experimental shell: floor plans and supporting sections, elevations, and roof plans are selected automatically, up to 8 sheets. Review the selection before processing. Add schedules where useful."
+                      ? "Floor plans, elevations, sections, roof plans, and opening schedules are selected automatically. Up to 24 sheets feed three budgeted stages: shell, walls/roofs, and door/window placement. Review supporting drawings before processing."
                       : "Choose the drawings needed for the shell and schedules."}{" "}
                     Processing continues when this page is closed.
                   </p>
@@ -1248,13 +1249,26 @@ export default function Studio() {
                           <p className="fineprint">
                             {plan.manifest.pageCount} sheets ·{" "}
                             {selections[plan.id]?.length ?? 0} selected. Floor
-                            plans, sections, elevations, and roof plans are
-                            selected automatically for new uploads. You can
-                            adjust the selection before processing. Confirm
-                            sheet selection and scales during review.{" "}
+                            plans, sections, elevations, roof plans, and
+                            schedules are selected automatically for new
+                            uploads. You can adjust the selection before
+                            processing. Confirm sheet selection and scales
+                            during review.{" "}
                             {session?.shellFusion
-                              ? "Select 2–8 sheets per shell extraction."
+                              ? "Select 2–24 sheets. Existing drafts stay saved when you create a new one."
                               : "Maximum 30 pages per extraction run."}
+                          </p>
+                          {selectionWarnings(
+                            plan.manifest,
+                            selections[plan.id] ?? [],
+                          ).map((message) => (
+                            <p className="error-text" key={message}>
+                              {message}
+                            </p>
+                          ))}
+                          <p className="fineprint">
+                            After creating a new AI draft, choose it in Model
+                            revisions to compare it with your saved model.
                           </p>
                           {plan.manifest.sheets.some(needsTitleOcr) &&
                             detail.jobs.some((j) => j.plan_id === plan.id) && (
@@ -1326,17 +1340,19 @@ export default function Studio() {
                             <p className="fineprint">
                               This PDF has more relevant sheets than fit in one
                               run. The suggestion keeps all detected floor plans
-                              and balances the remaining slots between sections,
-                              elevations, and roof plans. Some supporting sheets
-                              are omitted; review coverage if the model is
-                              incomplete.
+                              and required architectural sheets/schedules.
+                              Choose a smaller coherent package explicitly; no
+                              primary sheets are silently dropped. Optional
+                              supporting sheets may be omitted.
                             </p>
                           )}
                           {session?.shellFusion &&
-                            (selections[plan.id]?.length ?? 0) > 8 && (
+                            (selections[plan.id]?.length ?? 0) >
+                              MAX_SHELL_PAGES && (
                               <p className="error-text">
-                                More than 8 sheets are selected. Reduce the
-                                selection to 8 or fewer before processing.
+                                More than {MAX_SHELL_PAGES} sheets are selected.
+                                Split the project into a coherent set before
+                                processing.
                               </p>
                             )}
                           {!plan.manifest.sheets.some(

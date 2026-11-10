@@ -40,13 +40,20 @@ export function transformElement(
       ];
       member.elevation *= t.sy;
       member.height *= t.sy;
-      member.length *= t.sx;
+      if (member.pitch) {
+        const a = (member.pitch * Math.PI) / 180,
+          x = member.length * Math.cos(a) * t.sx,
+          y = member.length * Math.sin(a) * t.sy;
+        member.length = Math.hypot(x, y);
+        member.pitch = (Math.atan2(y, x) * 180) / Math.PI;
+      } else member.length *= t.sx;
       member.depth *= t.sz;
       member.rotation += (t.rotation * 180) / Math.PI;
     }
     w.start = [cx + t.dx - Math.cos(a) * half, cz + t.dz - Math.sin(a) * half];
     w.end = [cx + t.dx + Math.cos(a) * half, cz + t.dz + Math.sin(a) * half];
     w.height *= t.sy;
+    w.topProfile = w.topProfile?.map(([f, h]) => [f, h * t.sy]);
     w.thickness *= t.sz;
     w.inferred = true;
     for (const op of m.openings.filter((o) => o.wallId === id)) {

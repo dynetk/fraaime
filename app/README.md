@@ -107,7 +107,7 @@ Tests cover model units and openings, voids/decks, transformations, orphaned sch
 
 Local verification on November 9, 2026: 25 TypeScript/Node tests and 4 Python tests passed, along with type checking and a production build. Earlier local integration checks verified the following workflows. A private 103,258,067-byte, 71-page PDF passed upload, workflow indexing, and source rendering. The API smoke test also verified duplicate-job prevention, persisted model retrieval, stale-save rejection, upload limits, and refusal to extract without AI credentials. Browser checks covered drag/drop, mouse resize/rotate, undo, floor creation, save/reload persistence, source-sheet display, and a narrow mobile viewport. These results do not certify hosted integrations or AI extraction accuracy.
 
-Before opening the pilot to customers, use the four private reference sets as a benchmark corpus. Independently annotate source-sheet facts; existing demo geometry is not ground truth. Run multiple providers through `ExtractionProvider` as adapters are added. No dedicated OCR provider has been selected or benchmarked yet.
+Before opening the pilot to customers, use the four private reference sets as a benchmark corpus. Independently annotate source-sheet facts; existing demo geometry is not ground truth. Run multiple providers through `ExtractionProvider` as adapters are added. Local Tesseract assists unreadable sheet titles; [OCR-EVALUATION.md](OCR-EVALUATION.md) describes a zero-LLM native-text/OCR comparison. Specialized paid OCR providers remain a separate evaluation.
 
 ```sh
 npm run benchmark -- /private/candidate.json /private/annotations.json /private/report.json

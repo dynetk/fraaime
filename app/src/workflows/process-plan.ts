@@ -32,7 +32,7 @@ import {
   reserveDetailCost,
 } from "../lib/shell-detail-provider";
 import { saveCandidate } from "../lib/revisions";
-import { needsTitleOcr } from "../lib/sheet-selection";
+import { needsTitleOcr, selectionWarnings } from "../lib/sheet-selection";
 
 type Job = {
   id: string;
@@ -188,6 +188,11 @@ async function prepare(jobId: string) {
     manifest: plan.rows[0].manifest,
     name: plan.rows[0].name,
     fusion,
+    openings:
+      fusion &&
+      (calls.rows.length
+        ? calls.rows.some((c) => c.result?.openingsRequested)
+        : process.env.FRAAIME_SHELL_DETAILS === "1"),
     details:
       fusion &&
       (calls.rows.length
@@ -207,11 +212,13 @@ async function extractProjectShell(
   name: string,
   detailRequested = false,
   detailStage = false,
+  openingStage = false,
+  openingsRequested = false,
 ) {
   "use step";
   const j = await getJob(jobId),
     db = await database();
-  const checkpoint = detailStage ? -1 : 0;
+  const checkpoint = openingStage ? -2 : detailStage ? -1 : 0;
   const old = await db.query<{ state: string; result: ShellResult }>(
     "SELECT state,result FROM ai_calls WHERE job_id=$1 AND page=$2",
     [jobId, checkpoint],
@@ -226,8 +233,8 @@ async function extractProjectShell(
   const base = detailStage
     ? (
         await db.query<{ result: ShellResult }>(
-          "SELECT result FROM ai_calls WHERE job_id=$1 AND page=0 AND state='complete'",
-          [jobId],
+          "SELECT result FROM ai_calls WHERE job_id=$1 AND page=$2 AND state='complete'",
+          [jobId, openingStage ? -1 : 0],
         )
       ).rows[0]?.result
     : undefined;
@@ -276,13 +283,21 @@ async function extractProjectShell(
   });
   await phase(
     jobId,
-    detailStage
-      ? "Adding interior partitions and roof surfaces"
-      : "Reconciling floor plans, elevations, and sections",
+    openingStage
+      ? "Matching door/window schedules and placing openings"
+      : detailStage
+        ? "Adding interior/exterior walls and roof surfaces"
+        : "Reconciling floor plans, elevations, and sections",
   );
   try {
     const result = detailStage
-      ? await extractShellDetail(pages, j.plan_id, base!.model, base!.draft)
+      ? await extractShellDetail(
+          pages,
+          j.plan_id,
+          base!.model,
+          base!.draft,
+          openingStage,
+        )
       : await extractShell(pages, j.plan_id, name);
     const stored: ShellResult = {
       kind: "project-shell",
@@ -290,11 +305,13 @@ async function extractProjectShell(
       draft: detailStage ? base!.draft : (result.draft as ShellResult["draft"]),
       sourcePages: j.pages,
       detailRequested,
+      openingsRequested,
+      ...(openingStage ? { openingsComplete: true } : {}),
       ...(detailStage
         ? {
-            detailDraft: result.draft as NonNullable<
-              ShellResult["detailDraft"]
-            >,
+            detailDraft: (openingStage
+              ? base!.detailDraft
+              : result.draft) as NonNullable<ShellResult["detailDraft"]>,
           }
         : {}),
     };
@@ -460,6 +477,15 @@ async function finish(jobId: string) {
   await phase(jobId, "Validating model");
   const all = p.rows[0].manifest.sheets.map((s) => s.page);
   const model = assembleStoredResults(rows, p.rows[0].name, j.plan_id, all);
+  for (const message of selectionWarnings(p.rows[0].manifest, j.pages))
+    model.issues.push({
+      id: "coverage-missing-sheets",
+      elementId: null,
+      severity: "error",
+      message,
+      resolved: false,
+      resolution: "",
+    });
   await saveCandidate(db, j.project_id, jobId, j.base_head, model);
   await db.query(
     "UPDATE jobs SET state='needs_review',phase='Draft ready for review',updated_at=$1 WHERE id=$2 AND state<>'cancelled'",
@@ -528,9 +554,25 @@ export async function processPlan(jobId: string, mode: "inspect" | "extract") {
     if (prepared.fusion) {
       for (const page of prepared.job.pages)
         await prepareShellPage(jobId, page);
-      await extractProjectShell(jobId, prepared.name, prepared.details);
+      await extractProjectShell(
+        jobId,
+        prepared.name,
+        prepared.details,
+        false,
+        false,
+        prepared.openings,
+      );
       if (prepared.details)
-        await extractProjectShell(jobId, prepared.name, true, true);
+        await extractProjectShell(
+          jobId,
+          prepared.name,
+          true,
+          true,
+          false,
+          prepared.openings,
+        );
+      if (prepared.openings)
+        await extractProjectShell(jobId, prepared.name, true, true, true, true);
       await finish(jobId);
       return;
     }

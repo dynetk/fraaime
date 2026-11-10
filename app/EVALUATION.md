@@ -95,7 +95,7 @@ The provider parses the raw Responses result only after recording its status and
 
 `FRAAIME_SHELL_FUSION=1` opts a **new** extraction job into joint interpretation of 2–8 selected sheets. Leave it unset or `0` in production until the geometry review passes. This path explicitly uses `gpt-6.1-sol`, medium reasoning, standard service tier, and the verified Sol rates; it does not inherit another `OPENAI_MODEL` selection. Existing job checkpoints pin their processing mode on retry.
 
-Select every enclosed floor plan plus relevant sections/elevations, then roof plans and schedules within the eight-sheet limit. Sheet selection is still human assisted. Each sheet can carry multiple drawing roles. The worker normalizes and caches each sheet separately before the joint call; large image payloads stay in private artifact storage rather than workflow history. Storage accepts legacy and versioned page artifact keys.
+Select every enclosed floor plan plus relevant sections/elevations, then roof plans and schedules within the 24-sheet limit. Sheet selection is still human assisted. Each sheet can carry multiple drawing roles. The worker normalizes and caches each sheet separately before the joint call; large image payloads stay in private artifact storage rather than workflow history. Storage accepts legacy and versioned page artifact keys.
 
 `src/lib/shell-provider.ts` asks for normalized full-page traces, printed dimension witness points, a shared physical anchor across floors, a project datum, section-backed heights, roof vertices, placed openings, schedule entries, and source evidence. Local dropped ceilings and other distinct height conditions belong in review issues, not in the same measurement as the primary exterior height. The provider returns data, never executable geometry code.
 
@@ -149,3 +149,12 @@ Projected roof coverage measures enclosed floor area with an overhead roof surfa
 
 
 Dense detail extraction streams Responses API lifecycle/output events and waits for a terminal response before parsing any model. A dropped stream preserves its response ID when available, records unknown usage, and never publishes partial JSON. It has a ten-minute overall API timeout and no automatic API retries. Before hosted activation, confirm the generated Workflow function's maximum duration supports this request plus checkpoint time; local CLI success does not verify the host's execution limit. A timeout without provider usage is **unknown spend**, retained at the conservative reservation until reconciled. For a deliberate follow-up evaluation in a new result directory, pass `--prior-results=/private/path/first-results` so the budget also includes previous completed and uncertain calls. Never replace an uncertain checkpoint with a fresh run.
+
+
+## Three-stage hosted extraction (2026-11-10)
+
+New hosted jobs with both shell flags enabled run a base shell, wall/roof detailing, then focused door/window matching. The third checkpoint is `page=-2`; it uses completed wall IDs and all selected schedule/plan evidence. All three calls use the configured Sol/medium provider and existing spend reservations. A failed opening pass preserves the detailed shell with an explicit partial-model issue. Existing completed jobs are pinned to their original stages and saved human revisions remain untouched. The CLI `--details` comparison above still evaluates the second stage only.
+
+Suggested sheets now include recognized opening schedules and all primary architectural plans/elevations/sections, plus available cover, slab and roof-framing support within 24 pages. If primary sheets exceed the limit, the UI requires a deliberate selection instead of silently dropping them. Existing selections are retained; use **Use suggested sheets** to refresh them. OCR failures still require review or retry.
+
+The detail contract supports independent exterior/garden enclosures without expanding the floor footprint, and source-backed piecewise wall-top profiles. Solid walls, studs, tracks, quantities and editable members use these profiles. Schedule entries with no or too few matching openings produce review warnings. These checks improve completeness detection; only source-sheet review establishes geometric accuracy. No new paid plan extraction was run for this release.

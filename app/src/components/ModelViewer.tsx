@@ -280,7 +280,10 @@ export default function ModelViewer(props: Props) {
                 .map((v) =>
                   new THREE.Matrix4().compose(
                     new THREE.Vector3(v.x / 1000 - len / 2, v.y / 1000, 0),
-                    new THREE.Quaternion(),
+                    new THREE.Quaternion().setFromAxisAngle(
+                      new THREE.Vector3(0, 0, 1),
+                      v.pitch ?? 0,
+                    ),
                     new THREE.Vector3(
                       v.width / 1000,
                       v.height / 1000,
@@ -300,17 +303,27 @@ export default function ModelViewer(props: Props) {
           }
           continue;
         }
-        for (const piece of wallPieces(w, m.openings))
-          box(
-            g,
-            (piece.a + piece.b) / 2000 - len / 2,
-            (piece.bottom + piece.top) / 2000,
-            0,
-            (piece.b - piece.a) / 1000,
-            (piece.top - piece.bottom) / 1000,
-            w.thickness / 1000,
-            p.selected === w.id ? "#fff895" : "#ededed",
+        for (const piece of wallPieces(w, m.openings)) {
+          const ta = "topA" in piece ? (piece.topA as number) : piece.top;
+          const tb = "topB" in piece ? (piece.topB as number) : piece.top;
+          const shape = new THREE.Shape([
+            new THREE.Vector2(piece.a / 1000 - len / 2, piece.bottom / 1000),
+            new THREE.Vector2(piece.b / 1000 - len / 2, piece.bottom / 1000),
+            new THREE.Vector2(piece.b / 1000 - len / 2, tb / 1000),
+            new THREE.Vector2(piece.a / 1000 - len / 2, ta / 1000),
+          ]);
+          const geo = new THREE.ExtrudeGeometry(shape, {
+            depth: w.thickness / 1000,
+            bevelEnabled: false,
+          });
+          geo.translate(0, 0, -w.thickness / 2000);
+          g.add(
+            new THREE.Mesh(
+              geo,
+              material(p.selected === w.id ? "#fff895" : "#ededed"),
+            ),
           );
+        }
       }
       for (const o of m.openings) {
         const w = m.walls.find((w) => w.id === o.wallId),
@@ -365,6 +378,7 @@ export default function ModelViewer(props: Props) {
           c.center[1] / 1000,
         );
         g.rotation.y = (-c.rotation * Math.PI) / 180;
+        g.rotation.z = ((c.pitch ?? 0) * Math.PI) / 180;
         box(
           g,
           0,
