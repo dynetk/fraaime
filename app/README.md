@@ -1,6 +1,8 @@
 # Fraaime Project Studio pilot
 
-One private application for uploaded plan sets, source review, and editable 3D building shells. This is a pilot implementation, not an automated estimating or engineering product.
+One private application for uploaded plan sets, source review, and editable 3D building shells. This pilot includes editable, preliminary framing estimates with fictional demonstration prices; it is not an engineered takeoff or supplier quotation.
+
+Brand implementation: [BRAND.md](BRAND.md). Estimate scope, calculations, and limits: [ESTIMATING.md](ESTIMATING.md).
 
 ## What is implemented
 

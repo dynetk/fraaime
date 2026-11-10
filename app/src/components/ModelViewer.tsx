@@ -43,17 +43,17 @@ export default function ModelViewer(props: Props) {
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#eeede5");
+    scene.background = new THREE.Color("#ededed");
     const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 2000);
     camera.position.set(25, 24, 30);
     const orbit = new OrbitControls(camera, renderer.domElement);
     orbit.enableDamping = true;
     orbit.maxPolarAngle = Math.PI / 2.02;
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x7c806d, 2.5));
-    const sun = new THREE.DirectionalLight(0xfff4df, 3);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x79787d, 2.5));
+    const sun = new THREE.DirectionalLight(0xffffff, 3);
     sun.position.set(-20, 40, 15);
     scene.add(sun);
-    const grid = new THREE.GridHelper(120, 120, 0xb4baaa, 0xd9dccf);
+    const grid = new THREE.GridHelper(120, 120, 0xacacac, 0xc8c8c8);
     grid.position.y = -0.2;
     scene.add(grid);
     const root = new THREE.Group();
@@ -228,7 +228,7 @@ export default function ModelViewer(props: Props) {
               start: [line.start[0] - cx, -75, line.start[1] - cz],
               end: [line.end[0] - cx, -75, line.end[1] - cz],
             })),
-            p.selected === l.id ? "#bd9e48" : "#728d9b",
+            p.selected === l.id ? "#fff895" : "#acacac",
           );
           continue;
         }
@@ -252,7 +252,7 @@ export default function ModelViewer(props: Props) {
         });
         geometry.rotateX(-Math.PI / 2);
         geometry.translate(0, -0.15, 0);
-        g.add(new THREE.Mesh(geometry, material("#d6d0bc")));
+        g.add(new THREE.Mesh(geometry, material("#c8c8c8")));
       }
       for (const w of m.walls) {
         if (!visible(w.levelId)) continue;
@@ -289,12 +289,12 @@ export default function ModelViewer(props: Props) {
                   ),
                 ),
               p.selected === w.id
-                ? "#bd9e48"
+                ? "#fff895"
                 : kind === "header"
-                  ? "#b78e55"
+                  ? "#4b412b"
                   : kind === "track"
-                    ? "#59727e"
-                    : "#9baeb5",
+                    ? "#544f4c"
+                    : "#acacac",
               pieces.flatMap((v, index) => (v.kind === kind ? [index] : [])),
             );
           }
@@ -309,7 +309,7 @@ export default function ModelViewer(props: Props) {
             (piece.b - piece.a) / 1000,
             (piece.top - piece.bottom) / 1000,
             w.thickness / 1000,
-            p.selected === w.id ? "#bd9e48" : "#e5deca",
+            p.selected === w.id ? "#fff895" : "#ededed",
           );
       }
       for (const o of m.openings) {
@@ -329,7 +329,7 @@ export default function ModelViewer(props: Props) {
           // Thin selectable opening outline; the aperture remains empty.
           const width = o.width / 1000,
             height = o.height / 1000;
-          const color = p.selected === o.id ? "#e6ac39" : "#b78e55";
+          const color = p.selected === o.id ? "#fff895" : "#4b412b";
           for (const x of [-width / 2, width / 2])
             box(g, x, 0, 0, 0.012, height, 0.018, color);
           for (const y of [-height / 2, height / 2])
@@ -345,10 +345,10 @@ export default function ModelViewer(props: Props) {
           o.height / 1000,
           0.045,
           p.selected === o.id
-            ? "#c3a54b"
+            ? "#fff895"
             : o.kind === "window"
-              ? "#91acaa"
-              : "#ae9978",
+              ? "#c8c8c8"
+              : "#544f4c",
         );
       }
       for (const c of m.components) {
@@ -374,12 +374,12 @@ export default function ModelViewer(props: Props) {
           c.height / 1000,
           c.depth / 1000,
           p.selected === c.id
-            ? "#c3a54b"
+            ? "#fff895"
             : c.kind === "header"
-              ? "#b78e55"
+              ? "#4b412b"
               : c.kind === "track"
-                ? "#59727e"
-                : "#9baeb5",
+                ? "#544f4c"
+                : "#acacac",
         );
       }
       if (p.roofVisible)
@@ -408,7 +408,7 @@ export default function ModelViewer(props: Props) {
                   line.end[1] - cz,
                 ],
               })),
-              p.selected === r.id ? "#bd9e48" : "#728d9b",
+              p.selected === r.id ? "#fff895" : "#acacac",
             );
             continue;
           }
@@ -432,7 +432,7 @@ export default function ModelViewer(props: Props) {
             new THREE.Float32BufferAttribute(vertices, 3),
           );
           geo.computeVertexNormals();
-          const mat = material("#757e6e");
+          const mat = material("#79787d");
           mat.side = THREE.DoubleSide;
           g.add(new THREE.Mesh(geo, mat));
         }
