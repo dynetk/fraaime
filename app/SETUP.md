@@ -101,7 +101,7 @@ After indexing, new uploads preselect detected floor plans, sections, elevations
 and roof plans. Shell extraction accepts up to eight sheets: suggestions keep all
 floor plans, then distribute available slots across the three supporting types.
 Large sets show an omission notice; no floor is silently dropped, even if the floor
-set itself exceeds the limit. Standalone drawing titles take precedence over incidental keywords in notes and legends. Scanned or unreadable titles may require correction. Local checks selected six shell sheets for Santa Barbara, six for Loma Vista, and eight for Wald. Galloway titles are absent from native extracted text; that set still needs OCR or manual selection.
+set itself exceeds the limit. Standalone drawing titles take precedence over incidental keywords in notes and legends. Scanned or unreadable titles may require correction. Local checks selected six shell sheets for Santa Barbara, six for Loma Vista, and eight for Wald. For unreadable native titles, the indexing workflow now runs local Tesseract OCR in the PDF worker before suggesting sheets. Galloway is included in the private OCR evaluation.
 Use **Use suggested sheets** to refresh an existing selection. Manual choices and
 previous extraction selections take precedence until that button is used.
 Suggestions are a starting point, not a guarantee that every necessary drawing is included.
@@ -115,3 +115,38 @@ application; it does not send an invitation email. Users verify the same address
 that was granted access. Use project sharing separately for existing projects.
 Keep the application invitation check enabled; enabling email sign-in does not
 make customer projects public or grant every signed-in user pilot access.
+
+
+### Title OCR during PDF indexing
+
+The PDF worker image includes Poppler, Tesseract 5, and English language data.
+No OpenAI key or third-party OCR account is needed for title recognition. Vercel
+worker compute and storage/network usage still apply; this is not a claim of zero
+hosting cost. The separate shell-generation step continues to use the configured AI model.
+
+New uploads first inspect native text, then OCR only sheets without a recognizable
+drawing title. Each page is a durable Workflow step. OCR starts with the title-block
+area, falls back to the page, and tries other orientations within a time limit.
+Recognized lines retain confidence, normalized region, and OCR rotation separately
+from native PDF text. They help choose sheets; they do not supply verified dimensions
+or replace model/source review. Low-confidence results remain unclassified.
+
+Completed OCR is checkpointed in the private plan manifest. Resumes skip completed
+pages; failures are visible per sheet. Cancellation and project deletion prevent late
+OCR results from being saved. Each request reuses the protected worker-source route;
+no OCR route or customer source becomes public. Deploy the updated worker before the
+web application. `/health` should report `titleOcrVersion: 1` and
+`titleOcrAvailable: true`.
+
+Existing uploads can use **Read unreadable titles (OCR)** in Source sheets. This
+starts a fresh indexing job, updates suggested selection, and preserves saved model
+revisions. **Use suggested sheets** remains available after manual adjustments.
+Unreadable scans can still require manual selection; the eight-sheet shell limit
+still applies. No automatic paid extraction is started by indexing or reindexing.
+
+For local development, install `tesseract` and its English language data on PATH, or
+set `TESSERACT_CMD` to an executable path. The development launcher also recognizes
+an isolated runtime at `app/.local/ocr-runtime/env/bin/tesseract`. Run
+`TESSERACT_CMD=/path/to/tesseract worker/.venv/bin/python -m pytest worker/tests -q`
+from `app` to include the rotated-scan integration tests. Missing-engine failures
+are explicit and manual sheet selection remains available.

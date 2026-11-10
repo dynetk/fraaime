@@ -5,6 +5,7 @@ import {
   pageEvidence,
   type Manifest,
   type PageEvidence,
+  TitleOcrSchema,
 } from "../lib/worker";
 import {
   openAIProvider,
@@ -31,6 +32,7 @@ import {
   reserveDetailCost,
 } from "../lib/shell-detail-provider";
 import { saveCandidate } from "../lib/revisions";
+import { needsTitleOcr } from "../lib/sheet-selection";
 
 type Job = {
   id: string;
@@ -62,24 +64,104 @@ async function phase(id: string, value: string) {
     "cancelled",
   ]);
 }
+async function updateIndex(
+  jobId: string,
+  update: (manifest: Manifest | null) => Manifest,
+) {
+  const db = await database();
+  return db.transaction(async (tx) => {
+    const current = await tx.query<{ state: string; plan_id: string }>(
+      "SELECT j.state,j.plan_id FROM jobs j JOIN projects p ON p.id=j.project_id WHERE j.id=$1 AND p.deleted_at IS NULL FOR UPDATE OF j,p",
+      [jobId],
+    );
+    if (!current.rows[0] || current.rows[0].state === "cancelled")
+      throw new FatalError("Job cancelled or project deleted");
+    const planId = current.rows[0].plan_id;
+    const plan = await tx.query<{ manifest: Manifest | null }>(
+      "SELECT manifest FROM plans WHERE id=$1 FOR UPDATE",
+      [planId],
+    );
+    const manifest = update(plan.rows[0].manifest);
+    await tx.query("UPDATE plans SET manifest=$1,sha256=$2 WHERE id=$3", [
+      JSON.stringify(manifest),
+      manifest.sha256,
+      planId,
+    ]);
+    return manifest;
+  });
+}
 async function inspect(jobId: string) {
   "use step";
   const j = await getJob(jobId);
   await phase(jobId, "Inspecting PDF sheets");
-  const manifest = await worker<Manifest>("/inspect", j.plan_id);
+  const db = await database();
+  const old = await db.query<{ manifest: Manifest | null }>(
+    "SELECT manifest FROM plans WHERE id=$1",
+    [j.plan_id],
+  );
+  const native =
+    old.rows[0].manifest?.indexingVersion === 1
+      ? old.rows[0].manifest
+      : await worker<Manifest>("/inspect", j.plan_id);
+  const manifest = await updateIndex(jobId, () => ({
+    ...native,
+    indexingVersion: 1,
+    indexingComplete: false,
+  }));
+  const pages = manifest.sheets
+    .filter(needsTitleOcr)
+    .map((sheet) => sheet.page);
+  console.log("Title indexing", { jobId, ocrPages: pages.length });
+  return pages;
+}
+async function readSheetTitle(
+  jobId: string,
+  page: number,
+  position: number,
+  count: number,
+) {
+  "use step";
+  const j = await getJob(jobId);
+  const db = await database();
+  const result = await db.query<{ manifest: Manifest }>(
+    "SELECT manifest FROM plans WHERE id=$1",
+    [j.plan_id],
+  );
+  const sheet = result.rows[0].manifest.sheets.find((s) => s.page === page);
+  if (!sheet || !needsTitleOcr(sheet)) return;
+  await phase(
+    jobId,
+    `Reading drawing titles with OCR · ${position}/${count} · page ${page}`,
+  );
+  console.log("Title OCR", { jobId, page });
+  const ocr = TitleOcrSchema.parse(await worker("/ocr", j.plan_id, page));
+  await updateIndex(jobId, (current) => ({
+    ...current!,
+    sheets: current!.sheets.map((s) => (s.page === page ? { ...s, ocr } : s)),
+  }));
+}
+async function finishIndex(jobId: string) {
+  "use step";
+  await getJob(jobId);
+  const manifest = await updateIndex(jobId, (current) => ({
+    ...current!,
+    indexingComplete: true,
+  }));
+  const unresolved = manifest.sheets.filter(
+    (s) => s.ocr && s.ocr.status !== "complete",
+  ).length;
   await (
     await database()
-  ).transaction(async (tx) => {
-    await tx.query("UPDATE plans SET manifest=$1,sha256=$2 WHERE id=$3", [
-      JSON.stringify(manifest),
-      manifest.sha256,
-      j.plan_id,
-    ]);
-    await tx.query(
-      "UPDATE jobs SET state='needs_selection',phase='Choose source sheets',updated_at=$1 WHERE id=$2 AND state<>'cancelled'",
-      [now(), jobId],
-    );
-  });
+  ).query(
+    "UPDATE jobs SET state='needs_selection',phase=$1,error=NULL,updated_at=$2 WHERE id=$3 AND state<>'cancelled'",
+    [
+      unresolved
+        ? `Sheets ready · ${unresolved} OCR titles need review`
+        : "Sheets ready · review suggested selection",
+      now(),
+      jobId,
+    ],
+  );
 }
 async function prepare(jobId: string) {
   "use step";
@@ -436,7 +518,10 @@ export async function processPlan(jobId: string, mode: "inspect" | "extract") {
   "use workflow";
   try {
     if (mode === "inspect") {
-      await inspect(jobId);
+      const pages = await inspect(jobId);
+      for (let i = 0; i < pages.length; i++)
+        await readSheetTitle(jobId, pages[i], i + 1, pages.length);
+      await finishIndex(jobId);
       return;
     }
     const prepared = await prepare(jobId);

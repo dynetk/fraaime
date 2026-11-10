@@ -10,15 +10,18 @@ export const SHELL_SHEET_KINDS = [
 ] as const;
 
 /** Prefer standalone drawing titles over incidental words in notes and legends. */
-export function sheetKind(sheet: Pick<Sheet, "text" | "kind">): string {
-  if (!sheet.text.trim()) return sheet.kind;
-  const text = sheet.text.replace(
+function titleKind(rawText: string): string {
+  const text = rawText.replace(
     /\b(roof(?:\s+deck)?|floor)\s*\n\s*plan\b/gi,
     "$1 plan",
   );
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/\s+/g, " "));
+  const lines = text.split(/\r?\n/).map((line) =>
+    line
+      .trim()
+      .replace(/\s+/g, " ")
+      .replace(/[,&:]+$/, "")
+      .trim(),
+  );
   if (
     lines.some((line) =>
       /^(?:sheet index|drawing index|index of drawings|drawing list)$/i.test(
@@ -35,11 +38,13 @@ export function sheetKind(sheet: Pick<Sheet, "text" | "kind">): string {
       )
     )
       kind = "floor-plan";
-    else if (/^roof(?:\s+deck)?\s+plans?$/i.test(line)) kind = "roof-plan";
+    else if (/^(?:door|window|door\s*&\s*window)\s+schedules?$/i.test(line)) {
+      if (kind === "unclassified") kind = "schedule";
+    } else if (/^roof(?:\s+deck)?\s+plans?$/i.test(line)) kind = "roof-plan";
     else if (/^(?:exterior\s+|building\s+)?elevations?$/i.test(line))
       kind = "elevation";
     else if (
-      /^(?:(?:building|long|short|cross|longitudinal|transverse)\s+)?sections?$/i.test(
+      /^(?:(?:building|long|short|cross|partial|longitudinal|transverse)[ -]+)?sections?$/i.test(
         line,
       )
     )
@@ -48,10 +53,44 @@ export function sheetKind(sheet: Pick<Sheet, "text" | "kind">): string {
       /^(?:(?:site|electrical|power|lighting|foundation|framing|landscape)\s+plans?(?:\s+notes)?|(?:interior\s+elevations?|wall\s+sections?|general\s+notes|.*\s+details))$/i.test(
         line,
       )
-    )
-      kind = "unclassified";
+    ) {
+      if (!(kind === "section" && /details$/i.test(line)))
+        kind = "unclassified";
+    }
   }
-  return kind === "unclassified" && sheet.kind === "schedule" ? "schedule" : kind;
+  return kind;
+}
+
+export function sheetKind(sheet: Pick<Sheet, "text" | "kind" | "ocr">): string {
+  const native = titleKind(sheet.text);
+  if (native !== "unclassified") return native;
+  if (sheet.ocr?.status === "complete") {
+    // Use only confidence-filtered OCR lines, never a freeform guessed title.
+    const detected = titleKind(
+      sheet.ocr.lines
+        .filter((line) => line.confidence >= 60)
+        .map((line) => line.text)
+        .join("\n"),
+    );
+    if (detected !== "unclassified") return detected;
+  }
+  if (!sheet.text.trim() && !sheet.ocr) return sheet.kind;
+  return sheet.kind === "schedule" ? "schedule" : "unclassified";
+}
+
+export function needsTitleOcr(
+  sheet: Pick<Sheet, "text" | "kind" | "ocr">,
+): boolean {
+  if (sheet.ocr && sheet.ocr.status !== "failed") return false;
+  if (titleKind(sheet.text) !== "unclassified") return false;
+  // Readable non-shell titles need no OCR. Boilerplate alone does not count.
+  return !sheet.text
+    .split(/\r?\n/)
+    .some((line) =>
+      /^(?:sheet index|drawing index|index of drawings|drawing list|general notes|(?:site|electrical|power|lighting|foundation|framing|landscape) plans?(?: notes)?|interior elevations?|wall sections?|.* details)$/i.test(
+        line.trim(),
+      ),
+    );
 }
 
 export function suggestedPlanPages(

@@ -17,6 +17,7 @@ import type { Manifest } from "@/lib/worker";
 import {
   selectedPlanPages,
   sheetKind,
+  needsTitleOcr,
   suggestedPlanPages,
   SHELL_SHEET_KINDS,
   MAX_SHELL_PAGES,
@@ -113,8 +114,7 @@ export default function Studio() {
       selectedPlanPages(
         plan.manifest,
         pageSelections[plan.id],
-        detail?.jobs.find((job) => job.plan_id === plan.id && job.pages.length)
-          ?.pages,
+        detail?.jobs.find((job) => job.plan_id === plan.id)?.pages,
         session?.shellFusion ? MAX_SHELL_PAGES : 30,
       ),
     ]),
@@ -1230,8 +1230,55 @@ export default function Studio() {
                               ? "Select 2–8 sheets per shell extraction."
                               : "Maximum 30 pages per extraction run."}
                           </p>
+                          {plan.manifest.sheets.some(needsTitleOcr) &&
+                            detail.jobs.some((j) => j.plan_id === plan.id) && (
+                              <button
+                                className="quiet"
+                                disabled={
+                                  busy ||
+                                  detail.jobs.some(
+                                    (j) =>
+                                      j.plan_id === plan.id &&
+                                      ["preparing", "extracting"].includes(
+                                        j.state,
+                                      ),
+                                  )
+                                }
+                                onClick={() =>
+                                  run(async () => {
+                                    const job = detail.jobs.find(
+                                      (j) => j.plan_id === plan.id,
+                                    )!;
+                                    await api(
+                                      `jobs/${job.id}/index`,
+                                      "POST",
+                                      {},
+                                    );
+                                    setPageSelections((prev) => {
+                                      const next = { ...prev };
+                                      delete next[plan.id];
+                                      return next;
+                                    });
+                                    setNotice(
+                                      "Reading drawing titles with OCR. Suggestions will update when indexing finishes; saved models are unchanged.",
+                                    );
+                                    await refresh();
+                                  })
+                                }
+                              >
+                                Read unreadable titles (OCR)
+                              </button>
+                            )}
+                          {plan.manifest.indexingComplete === false && (
+                            <p className="fineprint">
+                              Reading sheet titles. Suggestions update as OCR
+                              completes; wait for indexing to finish before
+                              processing.
+                            </p>
+                          )}
                           <button
                             className="quiet"
+                            disabled={plan.manifest.indexingComplete === false}
                             onClick={() =>
                               setPageSelections((prev) => ({
                                 ...prev,
@@ -1271,8 +1318,8 @@ export default function Studio() {
                           ) && (
                             <p className="fineprint">
                               No floor plans were detected automatically. Select
-                              the relevant sheets below; scanned drawings may
-                              need manual selection.
+                              the relevant sheets below; OCR may still be
+                              running, or titles may need manual review.
                             </p>
                           )}
                           <div className="sheet-grid">
@@ -1281,6 +1328,9 @@ export default function Studio() {
                                 <label>
                                   <input
                                     type="checkbox"
+                                    disabled={
+                                      plan.manifest?.indexingComplete === false
+                                    }
                                     checked={(
                                       selections[plan.id] ?? []
                                     ).includes(s.page)}
@@ -1305,8 +1355,25 @@ export default function Studio() {
                                   <b>{s.sheet || `Page ${s.page}`}</b>
                                 </label>
                                 <span>
-                                  {sheetKind(s)} {s.scanned ? "· scan" : ""}
+                                  {sheetKind(s)} {s.scanned ? "· scan" : ""}{" "}
+                                  {s.ocr
+                                    ? `· OCR ${s.ocr.status === "complete" ? "read" : s.ocr.status}`
+                                    : ""}
                                 </span>
+                                {s.ocr?.status === "complete" && (
+                                  <span className="fineprint">
+                                    OCR title:{" "}
+                                    {s.ocr.lines
+                                      .slice(0, 3)
+                                      .map((line) => line.text)
+                                      .join(" · ")}
+                                  </span>
+                                )}
+                                {s.ocr?.error && (
+                                  <span className="error-text">
+                                    {s.ocr.error}
+                                  </span>
+                                )}
                                 <button
                                   onClick={() =>
                                     setSource({ planId: plan.id, page: s.page })
