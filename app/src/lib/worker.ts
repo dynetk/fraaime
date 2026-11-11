@@ -81,10 +81,13 @@ export async function worker<T>(
     signal: AbortSignal.timeout(endpoint === "/ocr" ? 350000 : 240000),
   });
   if (!response.ok) {
-    const body = await response
-      .json()
-      .catch(() => ({ detail: "PDF service failed" }));
-    throw new Error(String(body.detail || "PDF service failed"));
+    const fallback = `PDF service ${endpoint} returned HTTP ${response.status}. Retry PDF inspection or contact support if it repeats.`;
+    const body = await response.json().catch(() => ({ detail: fallback }));
+    throw new Error(
+      typeof body?.detail === "string" && body.detail
+        ? body.detail.slice(0, 1000)
+        : fallback,
+    );
   }
   return response.json() as Promise<T>;
 }

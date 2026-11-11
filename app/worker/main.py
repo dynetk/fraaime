@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import io
+import logging
 import os
 import re
 import shutil
@@ -18,10 +19,26 @@ from fastapi import FastAPI, Header, HTTPException
 from PIL import Image
 from title_ocr import ocr_file, OCR_VERSION
 from pydantic import BaseModel, Field
-from pypdf import PdfReader, PdfWriter, Transformation
+from pypdf import PdfReader, PdfWriter, Transformation, __version__ as PYPDF_VERSION
+from pypdf.errors import LimitReachedError, PdfReadError
 from pypdf.generic import RectangleObject
 
 app = FastAPI(title="Fraaime PDF preparation", docs_url=None, redoc_url=None)
+logger = logging.getLogger("fraaime.pdf")
+PARSER_ERRORS = (LimitReachedError, PdfReadError, RecursionError, ValueError, OverflowError)
+
+def fallback_text(path: Path, page_number: int, limit: int):
+    """Bounded independent parser; never relax pypdf's safety limits."""
+    with tempfile.TemporaryDirectory(prefix='fraaime-text-') as folder:
+        output = Path(folder)/'text.txt'
+        try:
+            subprocess.run(['pdftotext','-f',str(page_number),'-l',str(page_number),'-cropbox','-layout','-enc','UTF-8',str(path),str(output)],check=True,timeout=30,capture_output=True)
+            with output.open(encoding='utf-8',errors='replace') as source:
+                text=source.read(limit)
+                return text, 'poppler' if text.strip() else 'unreadable'
+        except (subprocess.SubprocessError,OSError):
+            # Retain the sheet for the existing title-OCR/manual-selection flow.
+            return '', 'unavailable'
 
 class Input(BaseModel):
     source_url: str
@@ -81,17 +98,24 @@ def classify(text: str):
 def inspect_file(path: Path, max_pages: int):
     pdf = reader(path, max_pages)
     sheets=[]
+    warnings=['Sheet classifications and detected tags are suggestions; verify selected sheets.']
     for index, page in enumerate(pdf.pages):
-        text = (page.extract_text() or '')[:12000]
+        text_source='pypdf'
+        try:
+            text = (page.extract_text() or '')[:12000]
+        except PARSER_ERRORS as error:
+            logger.warning('Page %s native text unavailable (%s); trying Poppler',index+1,type(error).__name__)
+            text,text_source=fallback_text(path,index+1,12000)
+            warnings.append(f'Page {index+1}: native text parsing failed; '+('Poppler recovered text.' if text_source=='poppler' else 'text unavailable; title OCR or manual sheet review is needed.'))
         width, height = float(page.cropbox.width), float(page.cropbox.height)
         rotation = int(page.get('/Rotate',0)) % 360
         if rotation in (90,270):
             width,height=height,width
         tags = re.findall(r'\b[A-Z]{1,2}\s?\d{1,2}(?:\.\d{1,2})?\b', text)
-        sheets.append(dict(page=index+1,width=width,height=height,rotation=rotation,text=text,kind=classify(text),sheet=tags[-1] if tags else '',revision='',scanned=len(text.strip())<40))
+        sheets.append(dict(page=index+1,width=width,height=height,rotation=rotation,text=text,kind=classify(text),sheet=tags[-1] if tags else '',revision='',scanned=len(text.strip())<40,textSource=text_source))
     with path.open('rb') as f:
         digest=hashlib.file_digest(f,'sha256').hexdigest()
-    return dict(sha256=digest,pageCount=len(sheets),sheets=sheets,warnings=['Sheet classifications and detected tags are suggestions; verify selected sheets.'])
+    return dict(sha256=digest,pageCount=len(sheets),sheets=sheets,warnings=warnings)
 
 def page_file(path: Path, page_number: int, max_pages: int):
     pdf=reader(path,max_pages)
@@ -99,22 +123,34 @@ def page_file(path: Path, page_number: int, max_pages: int):
         raise HTTPException(422,'Page is outside the document')
     # Normalize a private single-page copy before BOTH rendering and vector extraction.
     # This handles nonzero MediaBox origins, CropBox offsets and /Rotate identically.
-    writer = PdfWriter()
-    source_page = writer.add_page(pdf.pages[page_number-1])
-    original_rotation = source_page.rotation
-    source_page.transfer_rotation_to_content()
-    box = source_page.cropbox
-    width, height = round(float(box.width), 5), round(float(box.height), 5)
-    source_page.add_transformation(Transformation().translate(-float(box.left), -float(box.bottom)))
-    source_page.mediabox = RectangleObject([0, 0, width, height])
-    source_page.cropbox = RectangleObject([0, 0, width, height])
-    normalized = path.parent / 'normalized-page.pdf'
-    with normalized.open('wb') as f:
-        writer.write(f)
+    original=pdf.pages[page_number-1]
+    original_rotation=original.rotation
+    width,height=float(original.cropbox.width),float(original.cropbox.height)
+    if original_rotation in (90,270): width,height=height,width
+    vector_available=True
+    try:
+        writer = PdfWriter()
+        source_page = writer.add_page(original)
+        source_page.transfer_rotation_to_content()
+        box = source_page.cropbox
+        width, height = round(float(box.width), 5), round(float(box.height), 5)
+        source_page.add_transformation(Transformation().translate(-float(box.left), -float(box.bottom)))
+        source_page.mediabox = RectangleObject([0, 0, width, height])
+        source_page.cropbox = RectangleObject([0, 0, width, height])
+        normalized = path.parent / 'normalized-page.pdf'
+        with normalized.open('wb') as f:
+            writer.write(f)
+        render_page=1
+    except PARSER_ERRORS as error:
+        logger.warning('Page %s normalization unavailable (%s); rendering original crop',page_number,type(error).__name__)
+        # Poppler handles CropBox and /Rotate itself. Never attach unaligned vectors.
+        normalized,render_page,vector_available=path,page_number,False
+        width,height=float(original.cropbox.width),float(original.cropbox.height)
+        if original_rotation in (90,270): width,height=height,width
     # Poppler renders rotation/crop boxes. Rendering is bounded by pixel dimensions and a timeout.
     prefix=path.parent/'page'
     try:
-        subprocess.run(['pdftoppm','-f','1','-l','1','-cropbox','-singlefile','-scale-to','3072','-jpeg','-jpegopt','quality=78',str(normalized),str(prefix)],check=True,timeout=90,capture_output=True)
+        subprocess.run(['pdftoppm','-f',str(render_page),'-l',str(render_page),'-cropbox','-singlefile','-scale-to','3072','-jpeg','-jpegopt','quality=78',str(normalized),str(prefix)],check=True,timeout=90,capture_output=True)
     except (subprocess.SubprocessError,FileNotFoundError):
         raise HTTPException(422,'Could not render this page')
     images=[]
@@ -124,6 +160,10 @@ def page_file(path: Path, page_number: int, max_pages: int):
             crop.thumbnail((1536,1536))
             buf=io.BytesIO();crop.save(buf,format='JPEG',quality=68)
             images.append(dict(region=region,base64=base64.b64encode(buf.getvalue()).decode()))
+    if not vector_available:
+        text,text_source=fallback_text(path,page_number,30000)
+        warning='Native vector extraction unavailable. Use the rendered drawing and dimensions; do not infer missing geometry from an empty line list.'
+        return dict(evidenceVersion=2,coordinateSpace='displayed-crop-points',page=page_number,width=width,height=height,rotation=0,sourceRotation=original_rotation,text=warning+'\n'+text,textSource=text_source,lines=[],images=images,warnings=[warning])
     with pdfplumber.open(normalized) as doc:
         page=doc.pages[0]
         lines=[]
@@ -158,7 +198,7 @@ def clip_segment(segment, width, height):
 
 @app.get('/health')
 def health():
-    return {'ok':True,'evidenceVersion':2,'titleOcrVersion':OCR_VERSION,'titleOcrAvailable':bool(shutil.which(os.getenv('TESSERACT_CMD','tesseract')))}
+    return {'ok':True,'evidenceVersion':2,'titleOcrVersion':OCR_VERSION,'titleOcrAvailable':bool(shutil.which(os.getenv('TESSERACT_CMD','tesseract'))),'pdfParserVersion':PYPDF_VERSION,'textFallbackAvailable':bool(shutil.which('pdftotext'))}
 
 @app.post('/inspect')
 async def inspect(data: Input, authorization: str | None=Header(default=None)):

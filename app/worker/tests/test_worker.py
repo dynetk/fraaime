@@ -42,7 +42,7 @@ def test_auth_and_classification(monkeypatch):
     assert classify('Window schedule')=='schedule'
 
 @pytest.mark.parametrize('rotation',[0,90,180,270])
-def test_nonzero_origin_crop_rotation_and_diagonal_match_render(tmp_path, rotation):
+def test_nonzero_origin_crop_rotation_and_diagonal_match_render(tmp_path, rotation, monkeypatch):
     import base64, io
     from PIL import Image
     from pypdf.generic import RectangleObject, DecodedStreamObject, NameObject
@@ -71,6 +71,56 @@ def test_nonzero_origin_crop_rotation_and_diagonal_match_render(tmp_path, rotati
             py=int((y0+t*(y1-y0))/evidence['height']*image.height)
             colors=[image.getpixel((x,y)) for x in range(max(0,px-3),min(image.width,px+4)) for y in range(max(0,py-3),min(image.height,py+4))]
             assert any(r>150 and r>g*1.5 and r>b*1.5 for r,g,b in colors)
+    # A parser-limit fallback must preserve the exact displayed crop in all rotations.
+    from pypdf import PageObject
+    from pypdf.errors import LimitReachedError
+    def limited(*args,**kwargs): raise LimitReachedError('test parsing limit')
+    monkeypatch.setattr(PageObject,'add_transformation',limited)
+    fallback=page_file(path,1,2)
+    assert fallback['lines']==[]
+    assert fallback['warnings']
+    assert (fallback['width'],fallback['height'])==(evidence['width'],evidence['height'])
+    rendered=Image.open(io.BytesIO(base64.b64decode(fallback['images'][0]['base64']))).convert('RGB')
+    assert rendered.size==image.size
+    for x0,y0,x1,y1 in evidence['lines']:
+        for t in [.2,.5,.8]:
+            px=int((x0+t*(x1-x0))/evidence['width']*rendered.width)
+            py=int((y0+t*(y1-y0))/evidence['height']*rendered.height)
+            colors=[rendered.getpixel((x,y)) for x in range(max(0,px-3),min(rendered.width,px+4)) for y in range(max(0,py-3),min(rendered.height,py+4))]
+            assert any(r>150 and r>g*1.5 and r>b*1.5 for r,g,b in colors)
+
+def test_inspection_recovers_one_page_without_losing_other_sheets(tmp_path,monkeypatch):
+    import main
+    from pypdf import PageObject
+    from pypdf.errors import LimitReachedError
+    path=tmp_path/'source.pdf'
+    writer=PdfWriter();writer.add_blank_page(width=100,height=200);writer.add_blank_page(width=300,height=400)
+    with path.open('wb') as f:writer.write(f)
+    def text(page,*args,**kwargs):
+        if float(page.mediabox.width)==100:raise LimitReachedError('test limit')
+        return 'BUILDING SECTIONS\nA4.00'
+    monkeypatch.setattr(PageObject,'extract_text',text)
+    monkeypatch.setattr(main,'fallback_text',lambda *args:('FLOOR PLAN\nA2.00','poppler'))
+    result=inspect_file(path,5)
+    assert result['pageCount']==2
+    assert [s['page'] for s in result['sheets']]==[1,2]
+    assert [s['kind'] for s in result['sheets']]==['floor-plan','section']
+    assert result['sheets'][0]['textSource']=='poppler'
+    assert result['sheets'][1]['textSource']=='pypdf'
+    assert len(result['warnings'])==2
+    monkeypatch.setattr(main,'fallback_text',lambda *args:('','unavailable'))
+    result=inspect_file(path,5)
+    assert result['pageCount']==2 and result['sheets'][0]['scanned']
+    assert result['sheets'][0]['kind']=='unclassified'
+    assert 'title OCR' in result['warnings'][1]
+
+def test_poppler_text_failure_is_bounded_and_does_not_hide_sheet(tmp_path,monkeypatch):
+    import main,subprocess
+    def timeout(cmd,**kwargs):
+        assert kwargs['timeout']==30
+        raise subprocess.TimeoutExpired(cmd,30)
+    monkeypatch.setattr(main.subprocess,'run',timeout)
+    assert main.fallback_text(tmp_path/'source.pdf',2,12000)==('','unavailable')
 
 
 def test_clipping_preserves_direction_and_rejects_invisible():
