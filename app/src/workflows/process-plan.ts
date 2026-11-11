@@ -357,7 +357,7 @@ async function extractProjectShell(
     const details = error instanceof ExtractionFailure ? error.details : null,
       u = details?.usage;
     await db.query(
-      "UPDATE ai_calls SET state='uncertain',error=$1,cost_usd=$2,input_tokens=$3,output_tokens=$4,response_id=$5 WHERE id=$6 AND state<>'complete'",
+      "UPDATE ai_calls SET state=$7,error=$1,cost_usd=$2,input_tokens=$3,output_tokens=$4,response_id=$5,result=$8 WHERE id=$6 AND state<>'complete'",
       [
         error instanceof Error ? error.message : "Shell extraction failed",
         u
@@ -372,10 +372,24 @@ async function extractProjectShell(
         u?.outputTokens ?? null,
         details?.responseId ?? null,
         callId,
+        details?.status === "incomplete" &&
+        details.reason === "max_output_tokens"
+          ? "failed"
+          : "uncertain",
+        details
+          ? JSON.stringify({ kind: "shell-failure", failure: details })
+          : null,
       ],
     );
+    const stage = openingStage
+      ? "Door/window placement"
+      : detailStage
+        ? "Wall/roof extraction"
+        : "Shell extraction";
     throw new FatalError(
-      "Shell extraction stopped; no automatic duplicate API call will be made.",
+      details?.status === "incomplete" && details.reason === "max_output_tokens"
+        ? `${stage} reached the AI output limit (${u?.outputTokens ?? "maximum"} tokens). Completed stages are saved. ${openingStage ? "Resume processing to retry only the unfinished opening stage; this makes a new billable AI call." : "Review this attempt before starting a separate extraction."}`
+        : `${stage} stopped: ${processingErrorMessage(error)} No automatic duplicate API call will be made.`,
     );
   }
 }

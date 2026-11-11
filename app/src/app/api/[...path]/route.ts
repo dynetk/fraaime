@@ -22,6 +22,7 @@ import {
 import { MAX_SHELL_PAGES } from "@/lib/shell-provider";
 import { pricing } from "@/lib/extraction";
 import { saveSheetReview } from "@/lib/sheet-review";
+import { resumeCompletedStages } from "@/lib/extraction-recovery";
 import { processPlan } from "@/workflows/process-plan";
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -532,7 +533,7 @@ const handler = route(async (r) => {
           pages: [],
         };
       }
-      const targetId = j.id;
+      let targetId = j.id;
       if (!terminal.includes(j.state))
         throw new HttpError(409, "Job is already running");
       const mode =
@@ -605,6 +606,10 @@ const handler = route(async (r) => {
             }),
             j.plan_id,
           ]);
+        }
+        if (mode === "extract" && locked.rows[0].state === "failed") {
+          const resumed = await resumeCompletedStages(tx, targetId, user.email);
+          if (resumed) targetId = resumed;
         }
         await tx.query(
           "UPDATE jobs SET state=$1,phase=$2,pages=$3,error=NULL,updated_at=$4 WHERE id=$5",

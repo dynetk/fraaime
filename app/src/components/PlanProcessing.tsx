@@ -49,6 +49,13 @@ export default function PlanProcessing({
             it in Processing history.
           </p>
         )}
+        {latest.state === "failed" && latest.completed_pages.length > 0 && (
+          <p className="fineprint">
+            Completed stages are saved. For an output-limit failure, Resume
+            reuses them and retries only the unfinished stage. Earlier charges
+            remain in history; the resumed stage is a new billable AI call.
+          </p>
+        )}
         {latest.state === "failed" && (
           <button disabled={disabled} onClick={() => onNew(latest)}>
             Start separate extraction
