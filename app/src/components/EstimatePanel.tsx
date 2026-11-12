@@ -196,7 +196,8 @@ export default function EstimatePanel({
               shown separately and in the combined total, at one shared price
               per linear foot. Door/window unit sizes are used as provisional
               framing openings without manufacturer clearance. Header profiles
-              are schematic.
+              are schematic. Connection studs are included once in these totals.
+              Automatic wall stud spacing is capped at 16 inches on center.
             </p>
             <div style={{ overflowX: "auto" }}>
               <table>
@@ -219,6 +220,8 @@ export default function EstimatePanel({
                       <td>
                         {panel.openingSizesToVerify} opening sizes ·{" "}
                         {panel.headersToReview} header fits
+                        {" · "}
+                        {panel.connectionReviewCount} panel connections
                       </td>
                     </tr>
                   ))}
@@ -226,6 +229,13 @@ export default function EstimatePanel({
               </table>
             </div>
           </details>
+          {estimate.connectionReviewCount > 0 && (
+            <p className="estimate-caution">
+              {estimate.connectionReviewCount} panel connections need review.
+              Check web dimensions, opening conflicts and any custom members in
+              the model’s Panel connections list before using the totals.
+            </p>
+          )}
           {(estimate.openingSizesToVerify > 0 ||
             estimate.headersToReview > 0) && (
             <p className="estimate-caution">
@@ -293,9 +303,9 @@ export default function EstimatePanel({
             Include mock installation labor
           </label>
           <label className="estimate-field">
-            <span>Framing spacing</span>
+            <span>Floor / roof framing spacing</span>
             <select
-              aria-label="Estimate framing spacing"
+              aria-label="Estimate floor and roof framing spacing"
               value={settings.spacingMm}
               onChange={(e) =>
                 onSettings({
@@ -310,9 +320,10 @@ export default function EstimatePanel({
           </label>
           <p className="fineprint">
             Wall framing and all manually edited/added framing members are
-            included. Custom wall layouts retain their saved spacing. Floor
-            framing is off by default; a floor outline does not establish that
-            steel joists are needed.
+            included. Generated wall studs stay at most 16 inches on center.
+            Custom wall layouts retain their saved spacing. Floor framing is off
+            by default; a floor outline does not establish that steel joists are
+            needed.
           </p>
         </fieldset>
         <fieldset>

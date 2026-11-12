@@ -15,6 +15,9 @@ import { transformElement } from "../src/lib/editing";
 test("sloped wall geometry, studs, tracks, editable members and quantities agree", () => {
   const m = exampleModel(),
     w = m.walls[0];
+  // Exercise this isolated wall's profile, without corner extensions from
+  // unrelated sample walls. Connected profiles have their own regression test.
+  m.walls = [w];
   m.openings = [];
   w.start = [0, 0];
   w.end = [4000, 0];

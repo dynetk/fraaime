@@ -1,12 +1,13 @@
 import { wallArea as profiledWallArea } from "./model";
 import { length, minimumWallTop, type BuildingModel } from "./model";
 import {
-  wallFraming,
+  modelWallFraming,
   polygonFraming,
   roofHeight,
   FRAMING_TEMPLATE_VERSION,
   BOX_HEADER_WEB,
 } from "./framing";
+import { panelConnections } from "./panel-connections";
 import {
   EstimateSettingsSchema,
   MOCK_ESTIMATE_SETTINGS,
@@ -22,6 +23,7 @@ export const dollars = (v: number) =>
   );
 type Kind = "stud" | "track" | "header" | "joist";
 export type Quantity = {
+  role?: string;
   elementId: string;
   label: string;
   source:
@@ -87,13 +89,21 @@ export function buildEstimate(
     source: Quantity["source"],
     kind: Kind,
     mm: number,
+    role?: string,
   ) => {
     if (!Number.isFinite(mm) || mm <= 0) return;
     if (quantities.length >= 50000)
       throw new Error(
         "This model exceeds the 50,000-member demo-estimate limit. Estimate a smaller model.",
       );
-    quantities.push({ elementId, label, source, kind, lengthFt: mm / FT });
+    quantities.push({
+      elementId,
+      label,
+      source,
+      kind,
+      lengthFt: mm / FT,
+      ...(role ? { role } : {}),
+    });
   };
   const customWalls = new Map(
     (model.framingAssemblies ?? []).map((a) => [a.wallId, a]),
@@ -102,6 +112,8 @@ export function buildEstimate(
     (model.framingAssemblies ?? []).flatMap((a) => a.componentIds),
   );
   const components = new Map(model.components.map((c) => [c.id, c]));
+  const panelFrames = modelWallFraming(model, settings.spacingMm);
+  const connections = panelConnections(model).connections;
   let wallArea = 0,
     floorArea = 0,
     roofArea = 0;
@@ -117,7 +129,7 @@ export function buildEstimate(
         wallArea += profiledWallArea(wall) / SF;
       continue;
     }
-    const pieces = wallFraming(wall, model.openings, settings.spacingMm);
+    const pieces = panelFrames.get(wall.id) ?? [];
     if (pieces.length) wallArea += profiledWallArea(wall) / SF;
     for (const p of pieces)
       add(
@@ -126,6 +138,7 @@ export function buildEstimate(
         "wall preview",
         p.kind,
         p.kind === "stud" ? p.height : p.width,
+        p.role,
       );
   }
   for (const c of model.components) {
@@ -136,6 +149,7 @@ export function buildEstimate(
       customMembers.has(c.id) ? "custom wall" : "manual member",
       c.kind,
       c.kind === "stud" ? c.height : c.length,
+      c.framingRole,
     );
   }
   if (settings.includeFloorFraming)
@@ -274,6 +288,16 @@ export function buildEstimate(
       studLinearFeet: sum(["stud", "header"]),
       trackLinearFeet: sum(["track"]),
       totalLinearFeet: sum(["stud", "header", "track"]),
+      connectionStudLinearFeet: round(
+        members
+          .filter((q) => q.role === "panel connection stud")
+          .reduce((s, q) => s + q.lengthFt, 0),
+      ),
+      connectionReviewCount: connections.filter(
+        (c) =>
+          (c.throughWallId === wall.id || c.branchWallId === wall.id) &&
+          c.messages.length,
+      ).length,
       openingSizesToVerify: openings.filter(
         (o) => !o.dimensionBasis || o.dimensionBasis === "unknown",
       ).length,
@@ -286,6 +310,8 @@ export function buildEstimate(
   });
   return {
     wallPanels,
+    panelConnections: connections,
+    connectionReviewCount: connections.filter((c) => c.messages.length).length,
     framingTemplate: FRAMING_TEMPLATE_VERSION,
     openingSizesToVerify: wallPanels.reduce(
       (s, p) => s + p.openingSizesToVerify,
@@ -384,6 +410,8 @@ export function estimateCsv(
       "Opening sizes to verify",
       "Header fit checks",
       "Template/source",
+      "Connection stud LF (included in stud total)",
+      "Connection review checks",
     ],
   );
   for (const p of estimate.wallPanels)
@@ -395,6 +423,8 @@ export function estimateCsv(
       p.openingSizesToVerify,
       p.headersToReview,
       p.source,
+      p.connectionStudLinearFeet,
+      p.connectionReviewCount,
     ]);
   rows.push(
     [],

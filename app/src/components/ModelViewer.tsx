@@ -5,7 +5,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { BuildingModel, wallPieces, length } from "@/lib/model";
 import { transformElement, addElement } from "@/lib/editing";
-import { wallFraming, polygonFraming, roofHeight } from "@/lib/framing";
+import { modelWallFraming, polygonFraming, roofHeight } from "@/lib/framing";
 type Props = {
   model: BuildingModel;
   selected: string | null;
@@ -214,6 +214,7 @@ export default function ModelViewer(props: Props) {
       clear();
       const p = latest.current,
         m = p.model;
+      const panelFrames = p.framing ? modelWallFraming(m, p.spacing) : null;
       const visible = (id: string) => !p.levelId || p.levelId === id;
       for (const l of m.levels) {
         if (!visible(l.id) || l.outline.length < 3) continue;
@@ -271,7 +272,7 @@ export default function ModelViewer(props: Props) {
         );
         if (p.framing) {
           if (m.framingAssemblies?.some((a) => a.wallId === w.id)) continue;
-          const pieces = wallFraming(w, m.openings, p.spacing);
+          const pieces = panelFrames?.get(w.id) ?? [];
           for (const kind of ["stud", "track", "header"] as const) {
             members(
               g,

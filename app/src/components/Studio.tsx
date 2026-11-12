@@ -9,6 +9,7 @@ import {
   type ProcessingJob as Job,
 } from "@/lib/processing-jobs";
 import EstimatePanel from "./EstimatePanel";
+import PanelConnections from "./PanelConnections";
 import { MOCK_ESTIMATE_SETTINGS } from "@/lib/estimate-settings";
 import {
   BuildingModel,
@@ -609,9 +610,9 @@ export default function Studio() {
                     </div>
                     {framing && (
                       <label>
-                        Preview spacing{" "}
+                        Floor / roof spacing{" "}
                         <select
-                          aria-label="Framing spacing"
+                          aria-label="Floor and roof framing spacing"
                           value={spacing}
                           onChange={(e) => setSpacing(Number(e.target.value))}
                         >
@@ -625,20 +626,30 @@ export default function Studio() {
                     <div className="framing-note">
                       <strong>Illustrative framing</strong> · Studs, tracks,
                       opening headers, and floor joists generated from the
-                      shell. Opening cripple studs start at the center, at 16
-                      inches maximum, with a four-piece box header. Spacing and
-                      member sizes are preview assumptions, not engineered
-                      specifications. Click a stud, track, or header to edit
-                      that member. First selection saves that wall’s layout as
-                      individual components; spacing and opening changes no
-                      longer regenerate it. Floor and roof members still select
-                      their assembly. Save your changes before leaving.
+                      shell. Wall studs stay at 16 inches on center maximum. L
+                      and T junctions use separate butt-jointed panels with
+                      aligned connection studs. Opening cripple studs start at
+                      the center, at 16 inches maximum, with a four-piece box
+                      header. Spacing and member sizes are preview assumptions,
+                      not engineered specifications. Click a stud, track, or
+                      header to edit that member. First selection saves that
+                      wall’s layout as individual components; spacing and
+                      opening changes no longer regenerate it. Floor and roof
+                      members still select their assembly. Save your changes
+                      before leaving.
                       <div className="frame-legend">
                         <span>● Studs</span>
                         <span>● Tracks / joists</span>
                         <span>● Headers / openings</span>
                       </div>
                     </div>
+                  )}
+                  {framing && (
+                    <PanelConnections
+                      model={model}
+                      onChange={change}
+                      onSelect={setSelected}
+                    />
                   )}
                   <div className="toolbar">
                     <div className="toolgroup">
@@ -835,6 +846,46 @@ export default function Studio() {
                               )}
                               {field("Thickness", wall.thickness, (n) =>
                                 patch({ thickness: n }),
+                              )}
+                              <label className="field">
+                                Stud-web depth for panel connections · inches
+                                <input
+                                  type="number"
+                                  min={10 / 25.4}
+                                  max={2000 / 25.4}
+                                  step="0.125"
+                                  value={
+                                    Math.round(
+                                      ((wall.framingWebDepthMm ??
+                                        wall.thickness) /
+                                        25.4) *
+                                        1000,
+                                    ) / 1000
+                                  }
+                                  onChange={(e) => {
+                                    const mm = Number(e.target.value) * 25.4;
+                                    if (
+                                      e.target.value &&
+                                      mm >= 10 &&
+                                      mm <= 2000
+                                    )
+                                      patch({ framingWebDepthMm: mm });
+                                  }}
+                                />
+                              </label>
+                              {!wall.framingWebDepthMm ? (
+                                <p className="fineprint">
+                                  Uses the current modeled wall thickness. Enter
+                                  a value above to override it for this wall.
+                                </p>
+                              ) : (
+                                <button
+                                  onClick={() =>
+                                    patch({ framingWebDepthMm: undefined })
+                                  }
+                                >
+                                  Use modeled wall thickness
+                                </button>
                               )}
                               <label className="field">
                                 Orientation · degrees

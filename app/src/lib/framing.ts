@@ -5,6 +5,18 @@ import {
   type OpeningData,
   type BuildingModel,
 } from "./model";
+import { framingPanel, panelConnections } from "./panel-connections";
+import {
+  MEMBER_FACE,
+  STANDARD_SPACING,
+  BOX_HEADER_WEB,
+} from "./framing-constants";
+export {
+  MEMBER_FACE,
+  STANDARD_SPACING,
+  BOX_HEADER_WEB,
+  FRAMING_TEMPLATE_VERSION,
+} from "./framing-constants";
 
 export function editWallMember(
   input: BuildingModel,
@@ -17,7 +29,7 @@ export function editWallMember(
   const existing = input.framingAssemblies?.find((a) => a.wallId === wallId);
   if (existing)
     return { model: input, id: existing.componentIds[memberIndex] ?? null };
-  const pieces = wallFraming(wall, input.openings, spacing);
+  const pieces = modelWallFraming(input, spacing).get(wallId) ?? [];
   if (!pieces[memberIndex]) throw new Error("Select a framing member again.");
   if (input.components.length + pieces.length > 3000)
     throw new Error(
@@ -35,6 +47,7 @@ export function editWallMember(
     inferred: true,
     levelId: wall.levelId,
     kind: p.kind,
+    ...(p.role ? { framingRole: p.role } : {}),
     center: [
       wall.start[0] +
         Math.cos(angle) * p.x -
@@ -85,16 +98,47 @@ export type FramePiece = {
   depthOffset?: number;
   role?: string;
 };
-export const MEMBER_FACE = 38;
-export const STANDARD_SPACING = 406.4;
-export const BOX_HEADER_WEB = 152.4; // Lorenzo: 6-inch header C-profile web.
-export const FRAMING_TEMPLATE_VERSION = "lorenzo-openings-v1";
+/** Same derived members for viewing, editing and estimating. Coordinates remain
+ * relative to the original architectural wall, including extended panel ends. */
+export function modelWallFraming(model: BuildingModel, spacing: number) {
+  const { panels } = panelConnections(model);
+  const custom = new Set(model.framingAssemblies?.map((a) => a.wallId));
+  return new Map(
+    [...panels].map(([id, p]) => {
+      if (custom.has(id)) return [id, [] as FramePiece[]];
+      const panel = framingPanel(p);
+      const openings = model.openings
+        .filter((o) => o.wallId === id)
+        .map((o) => ({ ...o, offset: o.offset - p.startOffset }));
+      const pieces = wallFraming(
+        panel,
+        openings,
+        spacing,
+        p.connectionStuds.map((x) => x - p.startOffset),
+      );
+      return [
+        id,
+        pieces.map((v) => ({
+          ...v,
+          x: v.x + p.startOffset,
+          depth: v.depth ?? panel.thickness,
+        })),
+      ];
+    }),
+  );
+}
 
 export function wallFraming(
   wall: WallData,
   openings: OpeningData[],
   spacing: number,
+  connectionStuds: number[] = [],
 ): FramePiece[] {
+  if (!Number.isFinite(spacing) || spacing < 100)
+    throw new Error(
+      "Wall stud spacing must be a finite value of at least 100 mm.",
+    );
+  spacing = Math.min(spacing, STANDARD_SPACING);
   const span = length(wall),
     face = MEMBER_FACE;
   const holes = openings
@@ -171,13 +215,12 @@ export function wallFraming(
       });
     }
   } else add(0, wall.height - face, span, wall.height, "track");
-  const positions = new Set([face / 2, span - face / 2]);
+  const positions = new Set([face / 2, span - face / 2, ...connectionStuds]);
   // Bound pathological imported geometry; never silently change the spacing.
   if (span / spacing > 5000 || spacing < 100)
     throw new Error(
       "Wall is too large for the framing preview. Reduce its length first.",
     );
-  for (let x = spacing; x < span - face / 2; x += spacing) positions.add(x);
   for (const h of holes) {
     positions.add(h.left - face / 2);
     positions.add(h.right + face / 2);
@@ -226,6 +269,23 @@ export function wallFraming(
         });
     }
   }
+  // Mandatory jamb/connection studs take priority over the regular grid.
+  // Reuse coincident studs and avoid placing a grid stud on top of them.
+  const anchors = [...positions]
+    .sort((a, b) => a - b)
+    .filter((x, i, all) => i === 0 || x - all[i - 1] > 1);
+  positions.clear();
+  for (const x of anchors) positions.add(x);
+  for (let x = spacing; x < span - face / 2; x += spacing)
+    if (!anchors.some((a) => Math.abs(a - x) < face - 0.1)) positions.add(x);
+  // Moving a grid stud aside must not create a gap greater than 16 inches.
+  const ordered = [...positions].sort((a, b) => a - b);
+  for (let i = 1; i < ordered.length; i++) {
+    const a = ordered[i - 1],
+      b = ordered[i],
+      count = Math.ceil((b - a) / spacing);
+    for (let k = 1; k < count; k++) positions.add(a + ((b - a) * k) / count);
+  }
   for (const x of positions) {
     // Skip full studs that enter an opening's horizontal band; its centered
     // cripple grid supplies the material above/below instead of doubling it.
@@ -241,6 +301,9 @@ export function wallFraming(
       x + face / 2,
       Math.min(wallTop(wall, x - face / 2), wallTop(wall, x + face / 2)) - face,
       "stud",
+      connectionStuds.some((c) => Math.abs(c - x) <= 1)
+        ? { role: "panel connection stud" }
+        : {},
     );
   }
   return result;

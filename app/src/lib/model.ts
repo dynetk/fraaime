@@ -108,6 +108,15 @@ export const ExtractionModelSchema = z.object({
 });
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
+  panelConnectionChoices: z
+    .array(
+      z.object({
+        connectionId: z.string(),
+        throughWallId: id,
+      }),
+    )
+    .max(6000)
+    .optional(),
   estimate: EstimateSettingsSchema.optional(),
   panelQuantities: z
     .array(
@@ -120,6 +129,8 @@ export const ModelSchema = ExtractionModelSchema.extend({
         totalLinearFeet: z.number().nonnegative(),
         openingSizesToVerify: z.number().int().nonnegative(),
         headersToReview: z.number().int().nonnegative(),
+        connectionStudLinearFeet: z.number().nonnegative().optional(),
+        connectionReviewCount: z.number().int().nonnegative().optional(),
       }),
     )
     .max(3000)
@@ -138,11 +149,17 @@ export const ModelSchema = ExtractionModelSchema.extend({
     )
     .max(5000),
   components: z
-    .array(Component.extend({ pitch: z.number().min(-90).max(90).optional() }))
+    .array(
+      Component.extend({
+        pitch: z.number().min(-90).max(90).optional(),
+        framingRole: z.string().max(100).optional(),
+      }),
+    )
     .max(3000),
   walls: z
     .array(
       Wall.extend({
+        framingWebDepthMm: z.number().finite().min(10).max(2000).optional(),
         role: z.enum(["exterior", "courtyard", "interior"]).optional(),
         topProfile: z
           .array(

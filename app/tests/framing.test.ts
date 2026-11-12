@@ -66,13 +66,15 @@ test("wall transforms carry custom framing and wall deletion removes its members
     sy: 1,
     sz: 1,
   });
-  assert.equal(
-    transformed.components[0].center[0],
-    model.components[0].center[0] + 200,
+  assert(
+    Math.abs(
+      transformed.components[0].center[0] - model.components[0].center[0] - 200,
+    ) < 0.001,
   );
-  assert.equal(
-    transformed.components[0].center[1],
-    model.components[0].center[1] + 500,
+  assert(
+    Math.abs(
+      transformed.components[0].center[1] - model.components[0].center[1] - 500,
+    ) < 0.001,
   );
   assert.equal(removeElement(model, "wall-1").components.length, 0);
   assert.equal(removeElement(model, "level-1").framingAssemblies!.length, 0);
@@ -151,7 +153,7 @@ test("framing follows resized walls and spacing without mutating the model", () 
   const m = exampleModel(),
     before = JSON.stringify(m),
     w = m.walls[0];
-  assert(wallFraming(w, [], 406.4).length > wallFraming(w, [], 609.6).length);
+  assert.deepEqual(wallFraming(w, [], 406.4), wallFraming(w, [], 609.6));
   const resized = transformElement(m, w.id, {
     dx: 0,
     dy: 0,
