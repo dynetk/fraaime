@@ -11,6 +11,7 @@ import {
 import EstimatePanel from "./EstimatePanel";
 import PanelConnections from "./PanelConnections";
 import { MOCK_ESTIMATE_SETTINGS } from "@/lib/estimate-settings";
+import { currentModelSnapshot } from "@/lib/model-snapshot";
 import {
   BuildingModel,
   blankModel,
@@ -270,10 +271,7 @@ export default function Studio() {
   };
   const save = async (review = false) =>
     run(async () => {
-      const snapshot = {
-        ...model,
-        estimate: model.estimate ?? structuredClone(MOCK_ESTIMATE_SETTINGS),
-      };
+      const snapshot = currentModelSnapshot(model);
       const r = await api(
         `projects/${projectId}/${review ? "review" : "model"}`,
         "POST",
@@ -1173,18 +1171,26 @@ export default function Studio() {
                         ` · ${model.roofs.length} roof surfaces`}
                     </span>
                     <button
-                      onClick={async () => {
-                        const blob = new Blob(
-                          [JSON.stringify(model, null, 2)],
-                          { type: "application/json" },
-                        );
-                        const url = URL.createObjectURL(blob),
-                          a = document.createElement("a");
-                        a.href = url;
-                        a.download = "fraaime-model.json";
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
+                      onClick={() =>
+                        run(async () => {
+                          const blob = new Blob(
+                            [
+                              JSON.stringify(
+                                currentModelSnapshot(model),
+                                null,
+                                2,
+                              ),
+                            ],
+                            { type: "application/json" },
+                          );
+                          const url = URL.createObjectURL(blob),
+                            a = document.createElement("a");
+                          a.href = url;
+                          a.download = "fraaime-model.json";
+                          a.click();
+                          setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        })
+                      }
                     >
                       Export model JSON ↓
                     </button>
@@ -1336,8 +1342,8 @@ export default function Studio() {
                             </p>
                           ))}
                           <p className="fineprint">
-                            After creating a new AI draft, choose it in Model
-                            revisions to compare it with your saved model.
+                            Reopening this project loads the newest model. Use
+                            Model revisions to compare drafts and saved edits.
                           </p>
                           {plan.manifest.sheets.some(needsTitleOcr) &&
                             detail.jobs.some((j) => j.plan_id === plan.id) && (
@@ -1811,10 +1817,12 @@ export default function Studio() {
                     }
                   >
                     <option value="">Choose revision…</option>
-                    {detail?.revisions.map((r) => (
+                    {detail?.revisions.map((r, i) => (
                       <option key={r.id} value={r.id}>
                         {r.kind.startsWith("ai") ? "AI draft" : "Saved edit"} ·{" "}
                         {new Date(r.created_at).toLocaleString()}
+                        {r.kind === "ai_partial" ? " · partial" : ""}
+                        {i === 0 ? " · latest" : ""}
                         {r.reviewed ? " · reviewed" : ""}
                       </option>
                     ))}

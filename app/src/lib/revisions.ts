@@ -1,8 +1,7 @@
 import { BuildingModel, ModelSchema, validateModel } from "./model";
 import { Database, uid, now, audit } from "./db";
 import { HttpError } from "./access";
-import { buildEstimate } from "./estimate";
-import { MOCK_ESTIMATE_SETTINGS } from "./estimate-settings";
+import { currentModelSnapshot } from "./model-snapshot";
 export async function saveRevision(
   db: Database,
   projectId: string,
@@ -11,11 +10,7 @@ export async function saveRevision(
   email: string,
   reviewed = false,
 ) {
-  const model = ModelSchema.parse(input);
-  model.estimate ??= structuredClone(MOCK_ESTIMATE_SETTINGS);
-  const estimate = buildEstimate(model);
-  model.estimate = estimate.settings;
-  model.panelQuantities = estimate.wallPanels;
+  const model = currentModelSnapshot(ModelSchema.parse(input));
   if (
     reviewed &&
     (validateModel(model).some((i) => i.severity === "error") ||
@@ -73,10 +68,7 @@ export async function saveCandidate(
   model: BuildingModel,
   partial = false,
 ) {
-  model = ModelSchema.parse(model);
-  const estimate = buildEstimate(model);
-  model.estimate = estimate.settings;
-  model.panelQuantities = estimate.wallPanels;
+  model = currentModelSnapshot(model);
   return db.transaction(async (tx) => {
     const existing = await tx.query<{ id: string }>(
       "SELECT id FROM revisions WHERE job_id=$1 AND kind=$2",

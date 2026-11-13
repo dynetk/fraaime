@@ -7,6 +7,7 @@ import { database, audit, uid, now } from "@/lib/db";
 import { localMode, limit, required } from "@/lib/config";
 import { exampleModel, ModelSchema, validateModel } from "@/lib/model";
 import { saveRevision } from "@/lib/revisions";
+import { currentModelSnapshot } from "@/lib/model-snapshot";
 import {
   readSource,
   writeLocal,
@@ -207,14 +208,24 @@ const handler = route(async (r) => {
       return Response.json({ id: revisionId });
     }
     if (action === "model" && r.method === "GET") {
-      const revision =
-        new URL(r.url).searchParams.get("revision") || project.head_id;
-      if (!revision) return Response.json(null);
+      const revision = new URL(r.url).searchParams.get("revision");
+      // The saved head remains the optimistic-lock token for edits. Opening a
+      // project instead shows its newest draft or edit, without moving that head.
       const rows = await db.query(
-        "SELECT * FROM revisions WHERE id=$1 AND project_id=$2",
-        [revision, id],
+        revision
+          ? "SELECT * FROM revisions WHERE id=$1 AND project_id=$2"
+          : "SELECT * FROM revisions WHERE project_id=$1 ORDER BY created_at DESC, id DESC LIMIT 1",
+        revision ? [revision, id] : [id],
       );
-      return Response.json(rows.rows[0] ?? null);
+      const saved = rows.rows[0];
+      return Response.json(
+        saved
+          ? {
+              ...saved,
+              model: currentModelSnapshot(ModelSchema.parse(saved.model)),
+            }
+          : null,
+      );
     }
     if (r.method === "GET") {
       const [plans, jobs, revisions, members] = await Promise.all([
@@ -227,7 +238,7 @@ const handler = route(async (r) => {
           [id],
         ),
         db.query(
-          "SELECT id,parent_id,kind,reviewed,author,job_id,created_at FROM revisions WHERE project_id=$1 ORDER BY created_at DESC",
+          "SELECT id,parent_id,kind,reviewed,author,job_id,created_at FROM revisions WHERE project_id=$1 ORDER BY created_at DESC, id DESC",
           [id],
         ),
         db.query("SELECT email,role FROM memberships WHERE project_id=$1", [
