@@ -276,14 +276,20 @@ export function wallFraming(
     .filter((x, i, all) => i === 0 || x - all[i - 1] > 1);
   positions.clear();
   for (const x of anchors) positions.add(x);
-  for (let x = spacing; x < span - face / 2; x += spacing)
+  for (let n = 1; n * spacing < span - face / 2; n++) {
+    const x = n * spacing;
     if (!anchors.some((a) => Math.abs(a - x) < face - 0.1)) positions.add(x);
+  }
   // Moving a grid stud aside must not create a gap greater than 16 inches.
+  // Decimal millimetres (16 in = 406.4 mm) have binary rounding noise. Without
+  // this numerical tolerance, ceil(406.4000000000001 / 406.4) inserts an extra
+  // midpoint stud into an already correct bay. This is not a layout allowance.
+  const spacingTolerance = 1e-6; // mm
   const ordered = [...positions].sort((a, b) => a - b);
   for (let i = 1; i < ordered.length; i++) {
     const a = ordered[i - 1],
       b = ordered[i],
-      count = Math.ceil((b - a) / spacing);
+      count = Math.ceil((b - a - spacingTolerance) / spacing);
     for (let k = 1; k < count; k++) positions.add(a + ((b - a) * k) / count);
   }
   for (const x of positions) {

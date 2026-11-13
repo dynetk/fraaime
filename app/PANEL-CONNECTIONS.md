@@ -57,6 +57,24 @@ All eight estimates completed without exceptions. With modeled thickness accepte
 
 Detailed evidence: `.local/evaluations/panel-connections-2026-11-11/public-sample-replay.json`. Browser evidence: `.local/evaluations/panel-connections-2026-11-11/browser-proof.png` (the earlier screenshot includes the since-removed provisional-depth wording). The confirmed defaults were verified by regression tests, TypeScript and a fresh offline replay.
 
+## November 13 stud-spacing correction
+
+The gap-fill calculation could read a nominal 406.4 mm bay as
+406.4000000000001 mm and insert an unnecessary midpoint stud. This produced
+clusters at 8 inches on center even on uninterrupted walls. Template
+`lorenzo-panel-connections-v3` uses an integer-indexed grid and a 0.000001 mm
+numerical tolerance before rounding up the gap count. This tolerance only
+absorbs floating-point noise; genuine oversized bays still receive infill.
+Corner and T-junction rules, jambs, and centered opening cripples are unchanged.
+
+Regression verification: 122 tests, TypeScript and production build passed.
+Replayed saved Wald, Galloway, Loma Vista and Santa Barbara extraction models
+without new AI calls. Connection members, tracks, headers and opening cripple
+geometry were preserved; the extra ordinary studs were removed. The viewer,
+member editor and estimate share this corrected layout. Existing saved custom
+member assemblies remain intact; use the panel reset action to regenerate one,
+after preserving any intentional edits. No automatic saved-model migration runs.
+
 ## Remaining limits
 
 - Detection requires coincident centerlines or framing-face endpoints within 1 mm. Approximate extraction traces with gaps need correction; the app does not silently snap architectural walls.

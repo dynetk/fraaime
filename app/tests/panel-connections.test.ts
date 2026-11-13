@@ -206,11 +206,14 @@ test("connection members remain editable, persisted and counted once in panel li
   const member = saved.components.find((c) => c.id === edit.id)!;
   assert.equal(member.framingRole, "panel connection stud");
   const removed = buildEstimate(removeElement(saved, edit.id!));
+  // Subtract from unrounded quantities: panel display totals are rounded to
+  // hundredths of a foot and cannot be used as an exact arithmetic baseline.
+  const originalStudFeet = before.quantities
+    .filter((q) => q.elementId === "host" && ["stud", "header"].includes(q.kind))
+    .reduce((sum, q) => sum + q.lengthFt, 0);
   close(
     Math.round(
-      (before.wallPanels.find((p) => p.wallId === "host")!.studLinearFeet -
-        member.height / 304.8) *
-        100,
+      (originalStudFeet - member.height / 304.8) * 100,
     ) / 100,
     removed.wallPanels.find((p) => p.wallId === "host")!.studLinearFeet,
   );

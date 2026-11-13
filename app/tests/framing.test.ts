@@ -5,6 +5,39 @@ import { wallFraming, polygonFraming, roofHeight } from "../src/lib/framing";
 import { transformElement, removeElement } from "../src/lib/editing";
 import { editWallMember, resetWallFraming } from "../src/lib/framing";
 
+test("uninterrupted walls keep the requested stud grid without rounding-induced midpoint studs", () => {
+  const base = exampleModel().walls[0];
+  for (const spacing of [406.4, 304.8, 254]) {
+    for (const span of [3000, 6000, 12000, 30050]) {
+      const wall = { ...base, start: [0, 0], end: [span, 0] };
+      const actual = wallFraming(wall, [], spacing)
+        .filter((p) => p.kind === "stud")
+        .map((p) => p.x)
+        .sort((a, b) => a - b);
+      const expected = [19];
+      for (let n = 1; n * spacing < span - 19; n++)
+        expected.push(n * spacing);
+      expected.push(span - 19);
+      assert.equal(actual.length, expected.length, `${span} mm / ${spacing} mm`);
+      actual.forEach((x, i) => assert(Math.abs(x - expected[i]) < 0.000001));
+    }
+  }
+});
+
+test("a genuinely oversized bay beside a required stud still receives infill", () => {
+  const wall = { ...exampleModel().walls[0], start: [0, 0], end: [6000, 0] };
+  // This connection replaces the nearby 406.4 mm grid stud, leaving a real
+  // 416.4 mm bay to the next grid stud. Only that bay needs an extra member.
+  const studs = wallFraming(wall, [], 406.4, [396.4])
+    .filter((p) => p.kind === "stud")
+    .sort((a, b) => a.x - b.x);
+  assert.equal(studs.length, 17);
+  assert(studs.some((p) => Math.abs(p.x - 604.6) < 0.000001));
+  assert(studs.some((p) => p.x === 396.4 && p.role === "panel connection stud"));
+  for (let i = 1; i < studs.length; i++)
+    assert(studs[i].x - studs[i - 1].x <= 406.4 + 0.000001);
+});
+
 test("generated studs, tracks and headers become independent persisted components", () => {
   const original = exampleModel(),
     wall = original.walls[0];
