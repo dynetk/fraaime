@@ -551,3 +551,126 @@ test("coordinate crops preserve full-page bounds and handle odd-sized worker til
     0,
   );
 });
+
+test("room extraction preserves calibrated inside-face rectangles and evidenced ceiling heights as review candidates", () => {
+  const draft = details();
+  draft.roomZones = [
+    {
+      id: "room-1",
+      roomId: "living",
+      label: "Living",
+      levelId: "L1",
+      corners: [
+        [0.12, 0.12],
+        [0.28, 0.12],
+        [0.28, 0.28],
+        [0.12, 0.28],
+      ],
+      ceilingHeight: dim(2700),
+      kind: "ceiling",
+      upperLevelId: null,
+      evidence: [ev()],
+    },
+  ];
+  const result = compile(draft),
+    zone = result.trussZones![0];
+  assert(zone);
+  assert.equal(zone.confirmed, false);
+  assert.equal(zone.ceilingHeight, 2700);
+  assert.equal(zone.width, 2000);
+  assert.equal(zone.depth, 2000);
+  assert(zone.evidence.some((e) => e.page === 2));
+  const bad = details();
+  bad.roomZones = [
+    {
+      ...draft.roomZones[0],
+      ceilingHeight: { valueMm: null, estimated: false, evidence: [] },
+    },
+  ];
+  assert.equal(compile(bad).trussZones?.length, 0);
+  assert(
+    compile(bad).unresolvedObservations?.some((o) => o.kind === "room-zone"),
+  );
+  const base = {
+    ...result,
+    trussZones: [{ ...zone, confirmed: true, members: [] }],
+  };
+  const rerun = compileShellDetail(draft, base, baseDraft(), pages, "test");
+  assert.deepEqual(rerun.trussZones, base.trussZones);
+});
+
+test("room-only extraction cannot change accepted shell geometry and preserves edited rooms", async () => {
+  const { compileRooms, RoomResponseSchema } =
+    await import("../src/lib/room-extraction");
+  const { DetailResponseSchema } = await import("../src/lib/shell-detail");
+  const base = compile(details());
+  const room = {
+    id: "r",
+    roomId: "living",
+    label: "Living",
+    levelId: "L1",
+    corners: [
+      [0.12, 0.12],
+      [0.28, 0.12],
+      [0.28, 0.28],
+      [0.12, 0.28],
+    ],
+    ceilingHeight: dim(2700),
+    kind: "ceiling",
+    upperLevelId: null,
+    evidence: [ev()],
+    clearWidth: dim(2000),
+    clearDepth: dim(2000),
+  };
+  const draft = RoomResponseSchema.parse({
+    version: 1,
+    roomZones: [room],
+    issues: [],
+  });
+  const result = compileRooms(draft, base, baseDraft(), pages, "test");
+  assert.equal(result.trussZones!.length, 1);
+  for (const key of [
+    "walls",
+    "roofs",
+    "openings",
+    "levels",
+    "calibrations",
+    "components",
+    "scheduleEntries",
+    "detailProvenance",
+  ] as const)
+    assert.deepEqual(result[key], base[key]);
+  assert.equal(result.trussZones![0].confirmed, false);
+  result.trussZones![0].confirmed = true;
+  result.trussZones![0].members = [];
+  const rerun = compileRooms(
+    {
+      ...draft,
+      roomZones: [{ ...draft.roomZones[0], id: "renamed", roomId: "renamed" }],
+    },
+    result,
+    baseDraft(),
+    pages,
+    "test",
+  );
+  assert.deepEqual(rerun.trussZones, result.trussZones);
+  const bad = compileRooms(
+    {
+      ...draft,
+      roomZones: [
+        {
+          ...draft.roomZones[0],
+          ceilingHeight: { valueMm: null, estimated: false, evidence: [] },
+        },
+      ],
+    },
+    base,
+    baseDraft(),
+    pages,
+    "test",
+  );
+  assert.equal(bad.trussZones!.length, 1);
+  assert.equal(bad.trussZones![0].heightUnresolved, true);
+  assert.equal(bad.trussZones![0].confirmed, false);
+  assert(!("roomZones" in DetailResponseSchema.shape));
+});

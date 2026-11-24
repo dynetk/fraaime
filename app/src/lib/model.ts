@@ -106,8 +106,53 @@ export const ExtractionModelSchema = z.object({
   calibrations: z.array(Calibration).max(500),
   issues: z.array(Issue).max(5000),
 });
+// Physical, editable truss members use endpoints in mm, relative to their level datum.
+export const TrussMember = z.object({
+  id,
+  trussId: id,
+  role: z.enum(["top chord", "bottom chord", "vertical", "diagonal"]),
+  start: z.tuple([coord, coord, coord]),
+  end: z.tuple([coord, coord, coord]),
+});
+export const TrussZone = z.object({
+  heightUnresolved: z.boolean().optional(),
+  spanAxis: z.enum(["shorter", "width", "depth"]).optional(),
+  ...base,
+  roomId: id,
+  levelId: id,
+  center: z.tuple([coord, coord]),
+  width: z.number().min(100).max(100000),
+  depth: z.number().min(100).max(100000),
+  rotation: z.number().finite(),
+  ceilingHeight: z.number().min(0).max(30000),
+  kind: z.enum(["ceiling", "shared-floor-ceiling", "slab-on-grade"]),
+  upperLevelId: id.nullable(),
+  confirmed: z.boolean(),
+  // Absent = parametric. Present (even empty) = saved manual layout; never regenerate silently.
+  members: z.array(TrussMember).max(10000).optional(),
+});
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
+  trussZones: z.array(TrussZone).max(500).optional(),
+  framingQuantities: z
+    .object({
+      version: z.literal("lorenzo-2026-11-17"),
+      bracingLinearFeet: z.number().nonnegative(),
+      trussLinearFeet: z.number().nonnegative(),
+      trussCount: z.number().int().nonnegative(),
+      trussMemberCount: z.number().int().nonnegative(),
+      trussMembers: z
+        .array(
+          TrussMember.extend({
+            zoneId: id,
+            lengthMm: z.number().nonnegative(),
+          }),
+        )
+        .max(50000),
+      warnings: z.array(z.string()),
+      pricingStatus: z.literal("not-priced"),
+    })
+    .optional(),
   panelConnectionChoices: z
     .array(
       z.object({
@@ -129,6 +174,7 @@ export const ModelSchema = ExtractionModelSchema.extend({
         totalLinearFeet: z.number().nonnegative(),
         openingSizesToVerify: z.number().int().nonnegative(),
         headersToReview: z.number().int().nonnegative(),
+        horizontalBracingLinearFeet: z.number().nonnegative().optional(),
         connectionStudLinearFeet: z.number().nonnegative().optional(),
         connectionReviewCount: z.number().int().nonnegative().optional(),
       }),
@@ -151,6 +197,7 @@ export const ModelSchema = ExtractionModelSchema.extend({
   components: z
     .array(
       Component.extend({
+        kind: z.enum(["stud", "track", "header", "joist", "box", "brace"]),
         pitch: z.number().min(-90).max(90).optional(),
         framingRole: z.string().max(100).optional(),
       }),
@@ -213,6 +260,7 @@ export const ModelSchema = ExtractionModelSchema.extend({
     .array(
       z.object({
         wallId: id,
+        bracingVersion: z.literal("lorenzo-2026-11-17").optional(),
         spacing: z.number().positive(),
         componentIds: z.array(id).max(3000),
       }),
@@ -297,6 +345,7 @@ export function validateModel(model: BuildingModel): ModelIssue[] {
     ...model.openings,
     ...model.roofs,
     ...model.components,
+    ...(model.trussZones ?? []),
   ]) {
     if (ids.has(e.id)) add(e.id, "Duplicate element ID.");
     ids.add(e.id);
@@ -353,6 +402,32 @@ export function validateModel(model: BuildingModel): ModelIssue[] {
         )
           add(b.id, "Overlapping openings need review.");
       }
+  }
+  for (const zone of model.trussZones ?? []) {
+    if (!levels.has(zone.levelId))
+      add(zone.id, "Truss zone references a missing level.");
+    if (
+      zone.kind === "shared-floor-ceiling" &&
+      (!zone.upperLevelId ||
+        !levels.has(zone.upperLevelId) ||
+        zone.upperLevelId === zone.levelId)
+    )
+      add(
+        zone.id,
+        "Shared floor/ceiling zone needs a different existing upper floor.",
+      );
+    if (!zone.confirmed)
+      add(
+        zone.id,
+        "Review room boundaries and ceiling height before generating trusses.",
+        "warning",
+      );
+    for (const member of zone.members ?? []) {
+      if (ids.has(member.id)) add(member.id, "Duplicate truss member ID.");
+      ids.add(member.id);
+      if (Math.hypot(...member.end.map((v, i) => v - member.start[i])) < 1)
+        add(member.id, "Truss member is shorter than 1 mm.");
+    }
   }
   const framedWalls = new Set<string>(),
     framedMembers = new Set<string>();

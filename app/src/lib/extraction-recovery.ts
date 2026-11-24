@@ -62,16 +62,30 @@ export async function resumeCompletedStages(
   ).rows;
   const unfinished = calls.filter((c) => c.state !== "complete");
   if (!unfinished.length) return null;
-  if (unfinished.length !== 1 || !isOutputLimitedOpening(unfinished[0]))
+  if (
+    unfinished.length !== 1 ||
+    !(
+      isOutputLimitedOpening(unfinished[0]) ||
+      (unfinished[0].page === -3 &&
+        isOutputLimitedOpening({ ...unfinished[0], page: -2 }) &&
+        !!unfinished[0].result?.failure)
+    )
+  )
     throw new HttpError(
       409,
       "The previous AI call has an unknown or non-recoverable result. No duplicate call was made. Review the attempt before starting a separate extraction.",
     );
   const completed = calls.filter((c) => c.state === "complete");
+  const roomStage = unfinished[0].page === -3;
+  const expected = roomStage
+    ? completed.some((c) => c.page === -2)
+      ? [0, -1, -2]
+      : [0]
+    : [0, -1];
   if (
-    completed.length !== 2 ||
+    completed.length !== expected.length ||
     !completed.some((c) => c.page === 0) ||
-    !completed.some((c) => c.page === -1) ||
+    expected.some((page) => !completed.some((c) => c.page === page)) ||
     completed.some((c) => c.result?.kind !== "project-shell")
   )
     throw new HttpError(
@@ -100,7 +114,7 @@ export async function resumeCompletedStages(
   const id = uid(),
     stamp = now();
   await tx.query(
-    "INSERT INTO jobs(id,project_id,plan_id,state,phase,pages,budget_usd,base_head,created_at,updated_at) VALUES($1,$2,$3,'extracting','Queued · reusing saved shell and walls/roofs',$4,$5,$6,$7,$7)",
+    "INSERT INTO jobs(id,project_id,plan_id,state,phase,pages,budget_usd,base_head,created_at,updated_at) VALUES($1,$2,$3,'extracting','Queued · reusing completed stages',$4,$5,$6,$7,$7)",
     [
       id,
       job.project_id,
@@ -119,7 +133,7 @@ export async function resumeCompletedStages(
   await audit(tx, email, "job.resumed", job.project_id, {
     sourceJobId: jobId,
     resumedJobId: id,
-    reusedCheckpoints: [0, -1],
+    reusedCheckpoints: expected,
     previousCostUsd: spent,
     remainingBudgetUsd: budget,
   });

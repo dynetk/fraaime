@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectedPlanPages, sheetKind } from "../src/lib/sheet-selection";
+import {
+  selectedPlanPages,
+  sheetKind,
+  selectionWarnings,
+} from "../src/lib/sheet-selection";
 import type { Manifest } from "../src/lib/worker";
 
 function manifest(kinds: string[]): Manifest {
@@ -175,5 +179,50 @@ test("Wald-like nine architectural sheets plus schedules survive selection; obso
       text: "SHEET INDEX\nCOVER SHEET\nWINDOW SCHEDULE",
     }),
     "support",
+  );
+});
+
+test("reflected ceiling plans are core evidence, including native and OCR RCP titles", () => {
+  for (const text of [
+    "RCP",
+    "1ST FLOOR RCP",
+    "RCP - 1ST FLOOR",
+    "2ND FLOOR RCP",
+    "FIRST FLOOR REFLECTED CEILING PLAN",
+    "REFLECTED\nCEILING\nPLAN",
+  ]) {
+    assert.equal(sheetKind({ text, kind: "unclassified" }), "ceiling-plan");
+    assert.equal(
+      sheetKind({
+        text: "",
+        kind: "unclassified",
+        ocr: {
+          version: 2,
+          engine: "tesseract",
+          status: "complete",
+          text,
+          lines: [{ text, confidence: 95, region: [0, 0, 1, 1] }],
+        },
+      }),
+      "ceiling-plan",
+    );
+  }
+  const m = manifest(["floor-plan", "ceiling-plan", "section"]);
+  assert.deepEqual(selectedPlanPages(m, undefined), [1, 2, 3]);
+  assert.deepEqual(selectedPlanPages(m, [1, 3]), [1, 3]);
+  assert.match(selectionWarnings(m, [1, 3])[0], /ceiling-plan/);
+  assert.equal(
+    sheetKind({
+      text: "Coordinate RCP with mechanical work",
+      kind: "unclassified",
+    }),
+    "unclassified",
+  );
+  assert.equal(
+    sheetKind({
+      text: "SHEET INDEX\nREFLECTED CEILING PLAN",
+      kind: "unclassified",
+    }),
+    "unclassified",
   );
 });

@@ -1,3 +1,9 @@
+import {
+  legacyFramingArea,
+  modelTrusses,
+  memberLength,
+  withoutTrussCoverage,
+} from "./trusses";
 import { wallArea as profiledWallArea } from "./model";
 import { length, minimumWallTop, type BuildingModel } from "./model";
 import {
@@ -21,7 +27,7 @@ export const dollars = (v: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     v,
   );
-type Kind = "stud" | "track" | "header" | "joist";
+type Kind = "stud" | "track" | "header" | "joist" | "brace" | "truss";
 export type Quantity = {
   role?: string;
   elementId: string;
@@ -31,7 +37,8 @@ export type Quantity = {
     | "custom wall"
     | "manual member"
     | "floor preview"
-    | "roof preview";
+    | "roof preview"
+    | "truss assembly";
   kind: Kind;
   lengthFt: number;
 };
@@ -47,33 +54,13 @@ export type EstimateLine = {
 };
 export const ESTIMATE_EXCLUSIONS = [
   "Fictional prices and illustrative framing quantities; not a supplier quote, engineered takeoff, or cost to build the whole project.",
-  "No specified steel grade/gauge, stock-length optimization, connectors, fasteners, bracing, sheathing, foundations, roof covering, doors/windows, finishes, MEP, engineering, permits, or tax.",
+  "No specified steel grade/gauge, stock-length optimization, connectors, fasteners, engineered bracing design, sheathing, foundations, roof covering, doors/windows, finishes, MEP, engineering, permits, or tax.",
   "Opening framing uses modeled dimensions without an invented unit-to-rough-opening allowance. Per the pilot assumption, door/window unit dimensions are used as provisional framing openings with no added manufacturer clearance. Box headers use two schematic 6-inch C webs and two U tracks matching wall depth; steel gauge, flanges, bearing and connection design are unresolved.",
   "Opening products and unplaced schedule rows are excluded. Openings only affect the framing preview around them.",
+  "Horizontal bracing and trusses are quantified but unpriced pending Lorenzo’s estimating rules. Their cost is not included in this partial mock estimate.",
   "Floor/roof perimeter pieces use the same mock joist rate. Roof decks are excluded from automatic roof framing. Manual framing members are always included; generic boxes are unpriced.",
   "Wall labor uses gross wall area, without subtracting openings. Floor/roof labor uses net modeled area. Standalone manual-member installation is not quantified separately.",
 ];
-function area2(points: number[][]): number {
-  return (
-    Math.abs(
-      points.reduce((s, p, i) => {
-        const q = points[(i + 1) % points.length];
-        return s + p[0] * q[1] - q[0] * p[1];
-      }, 0),
-    ) / 2
-  );
-}
-function area3(points: number[][]): number {
-  const n = [0, 0, 0];
-  for (let i = 0; i < points.length; i++) {
-    const a = points[i],
-      b = points[(i + 1) % points.length];
-    n[0] += (a[1] - b[1]) * (a[2] + b[2]);
-    n[1] += (a[2] - b[2]) * (a[0] + b[0]);
-    n[2] += (a[0] - b[0]) * (a[1] + b[1]);
-  }
-  return Math.hypot(...n) / 2;
-}
 export function buildEstimate(
   model: BuildingModel,
   input: EstimateSettings = model.estimate ?? MOCK_ESTIMATE_SETTINGS,
@@ -155,48 +142,70 @@ export function buildEstimate(
   if (settings.includeFloorFraming)
     for (const level of model.levels) {
       floorArea +=
-        Math.max(
-          0,
-          area2(level.outline) - level.voids.reduce((s, v) => s + area2(v), 0),
+        legacyFramingArea(
+          model,
+          level.outline.map((p) => [p[0], level.elevation, p[1]]),
+          level.voids.map((h) => h.map((p) => [p[0], level.elevation, p[1]])),
         ) / SF;
-      for (const l of polygonFraming(
-        level.outline,
-        level.voids,
-        settings.spacingMm,
+      for (const l of withoutTrussCoverage(
+        model,
+        polygonFraming(level.outline, level.voids, settings.spacingMm).map(
+          (l) => ({
+            start: [l.start[0], level.elevation, l.start[1]],
+            end: [l.end[0], level.elevation, l.end[1]],
+          }),
+        ),
       ))
         add(
           level.id,
           level.label,
           "floor preview",
           "joist",
-          Math.hypot(l.end[0] - l.start[0], l.end[1] - l.start[1]),
+          Math.hypot(...l.end.map((v, i) => v - l.start[i])),
         );
     }
   if (settings.includeRoofFraming)
     for (const roof of model.roofs) {
       if (roof.surface === "roof-deck") continue;
       roofArea +=
-        Math.max(
-          0,
-          area3(roof.vertices) -
-            (roof.voids ?? []).reduce((s, v) => s + area3(v), 0),
-        ) / SF;
-      for (const l of polygonFraming(
-        roof.vertices.map((v) => [v[0], v[2]]),
-        (roof.voids ?? []).map((h) => h.map((v) => [v[0], v[2]])),
-        settings.spacingMm,
-      )) {
-        const y0 = roofHeight(roof.vertices, l.start[0], l.start[1]),
-          y1 = roofHeight(roof.vertices, l.end[0], l.end[1]);
+        legacyFramingArea(model, roof.vertices, roof.voids ?? []) / SF;
+      for (const l of withoutTrussCoverage(
+        model,
+        polygonFraming(
+          roof.vertices.map((v) => [v[0], v[2]]),
+          (roof.voids ?? []).map((h) => h.map((v) => [v[0], v[2]])),
+          settings.spacingMm,
+        ).map((l) => ({
+          start: [
+            l.start[0],
+            roofHeight(roof.vertices, l.start[0], l.start[1]),
+            l.start[1],
+          ],
+          end: [
+            l.end[0],
+            roofHeight(roof.vertices, l.end[0], l.end[1]),
+            l.end[1],
+          ],
+        })),
+      ))
         add(
           roof.id,
           roof.label,
           "roof preview",
           "joist",
-          Math.hypot(l.end[0] - l.start[0], y1 - y0, l.end[1] - l.start[1]),
+          Math.hypot(...l.end.map((v, i) => v - l.start[i])),
         );
-      }
     }
+  const trusses = modelTrusses(model);
+  for (const member of trusses.members)
+    add(
+      member.id,
+      member.role,
+      "truss assembly",
+      "truss",
+      memberLength(member),
+      member.role,
+    );
   const lines: EstimateLine[] = [];
   const names = {
     stud: "Studs",
@@ -285,9 +294,10 @@ export function buildEstimate(
       wallId: wall.id,
       label: wall.label,
       source: assembly ? "saved custom members" : FRAMING_TEMPLATE_VERSION,
-      studLinearFeet: sum(["stud", "header"]),
+      studLinearFeet: sum(["stud", "header", "brace"]),
       trackLinearFeet: sum(["track"]),
-      totalLinearFeet: sum(["stud", "header", "track"]),
+      horizontalBracingLinearFeet: sum(["brace"]),
+      totalLinearFeet: sum(["stud", "header", "track", "brace"]),
       connectionStudLinearFeet: round(
         members
           .filter((q) => q.role === "panel connection stud")
@@ -310,6 +320,25 @@ export function buildEstimate(
   });
   return {
     wallPanels,
+    framingQuantities: {
+      version: "lorenzo-2026-11-17" as const,
+      bracingLinearFeet: round(
+        quantities
+          .filter((q) => q.kind === "brace")
+          .reduce((s, q) => s + q.lengthFt, 0),
+      ),
+      trussLinearFeet: round(
+        trusses.members.reduce((s, m) => s + memberLength(m) / FT, 0),
+      ),
+      trussCount: new Set(trusses.members.map((m) => m.trussId)).size,
+      trussMemberCount: trusses.members.length,
+      trussMembers: trusses.members.map((m) => ({
+        ...m,
+        lengthMm: memberLength(m),
+      })),
+      warnings: trusses.warnings,
+      pricingStatus: "not-priced" as const,
+    },
     panelConnections: connections,
     connectionReviewCount: connections.filter((c) => c.messages.length).length,
     framingTemplate: FRAMING_TEMPLATE_VERSION,
@@ -374,6 +403,17 @@ export function estimateCsv(
     ]);
   rows.push(
     [],
+    ["Quantity only - pricing pending", "Linear feet"],
+    ["Horizontal bracing", estimate.framingQuantities.bracingLinearFeet],
+    [
+      "Truss chords, diagonals and verticals",
+      estimate.framingQuantities.trussLinearFeet,
+    ],
+    ["Trusses", estimate.framingQuantities.trussCount],
+    ...estimate.framingQuantities.warnings.map((w) => ["Truss review", w]),
+  );
+  rows.push(
+    [],
     ["Materials incl. waste", estimate.materials],
     ["Labor", estimate.labor],
     ["Delivery", estimate.delivery],
@@ -404,7 +444,7 @@ export function estimateCsv(
     ["Wall panel linear feet — before waste"],
     [
       "Wall",
-      "Studs incl. header C members LF",
+      "C members incl. header and HB LF",
       "Tracks LF",
       "Total LF",
       "Opening sizes to verify",
@@ -412,6 +452,7 @@ export function estimateCsv(
       "Template/source",
       "Connection stud LF (included in stud total)",
       "Connection review checks",
+      "Horizontal bracing LF (included in C member total; unpriced)",
     ],
   );
   for (const p of estimate.wallPanels)
@@ -425,6 +466,7 @@ export function estimateCsv(
       p.source,
       p.connectionStudLinearFeet,
       p.connectionReviewCount,
+      p.horizontalBracingLinearFeet,
     ]);
   rows.push(
     [],

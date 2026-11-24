@@ -5,6 +5,7 @@ import {
   type OpeningData,
   type BuildingModel,
 } from "./model";
+import { horizontalBracing } from "./horizontal-bracing";
 import { framingPanel, panelConnections } from "./panel-connections";
 import {
   MEMBER_FACE,
@@ -66,7 +67,12 @@ export function editWallMember(
   model.components.push(...components);
   model.framingAssemblies = [
     ...(model.framingAssemblies ?? []),
-    { wallId, spacing, componentIds: components.map((c) => c.id) },
+    {
+      wallId,
+      spacing,
+      componentIds: components.map((c) => c.id),
+      bracingVersion: "lorenzo-2026-11-17",
+    },
   ];
   return { model, id: components[memberIndex].id };
 }
@@ -92,7 +98,7 @@ export type FramePiece = {
   y: number;
   width: number;
   height: number;
-  kind: "stud" | "track" | "header";
+  kind: "stud" | "track" | "header" | "brace";
   pitch?: number;
   depth?: number;
   depthOffset?: number;
@@ -116,6 +122,7 @@ export function modelWallFraming(model: BuildingModel, spacing: number) {
         spacing,
         p.connectionStuds.map((x) => x - p.startOffset),
       );
+      pieces.push(...horizontalBracing(panel, openings, pieces));
       return [
         id,
         pieces.map((v) => ({
@@ -364,4 +371,63 @@ export function roofHeight(vertices: Point[], x: number, z: number): number {
     return a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1]);
   }
   return a?.[1] ?? 0;
+}
+
+/** Explicit upgrade preserves older custom members. Version records intentional HB deletion. */
+export function addBracingToCustomWalls(input: BuildingModel): BuildingModel {
+  const model = structuredClone(input);
+  for (const assembly of model.framingAssemblies ?? []) {
+    if (assembly.bracingVersion) continue;
+    const wall = model.walls.find((w) => w.id === assembly.wallId);
+    if (!wall) continue;
+    const angle = Math.atan2(
+      wall.end[1] - wall.start[1],
+      wall.end[0] - wall.start[0],
+    );
+    const ids = new Set(assembly.componentIds),
+      existing = model.components.filter((c) => ids.has(c.id));
+    const pieces: FramePiece[] = existing.map((c) => ({
+      x:
+        (c.center[0] - wall.start[0]) * Math.cos(angle) +
+        (c.center[1] - wall.start[1]) * Math.sin(angle),
+      y: c.elevation + c.height / 2,
+      width: c.length,
+      height: c.height,
+      kind: c.kind === "box" || c.kind === "joist" ? "header" : c.kind,
+      pitch: ((c.pitch ?? 0) * Math.PI) / 180,
+    }));
+    // Already present HB is a horizontal obstacle, preventing duplicate pieces.
+    const obstacles = pieces.map((p) =>
+      p.kind === "brace" ? { ...p, kind: "track" as const } : p,
+    );
+    const braces = horizontalBracing(wall, model.openings, obstacles);
+    for (const b of braces) {
+      const id = crypto.randomUUID();
+      model.components.push({
+        id,
+        label: `${wall.label} · Horizontal bracing`,
+        levelId: wall.levelId,
+        evidence: structuredClone(wall.evidence),
+        inferred: true,
+        kind: "brace",
+        framingRole: "horizontal bracing",
+        center: [
+          wall.start[0] + b.x * Math.cos(angle),
+          wall.start[1] + b.x * Math.sin(angle),
+        ],
+        elevation: b.y - b.height / 2,
+        length: b.width,
+        height: b.height,
+        depth: wall.thickness,
+        rotation: (angle * 180) / Math.PI,
+      });
+      assembly.componentIds.push(id);
+    }
+    assembly.bracingVersion = "lorenzo-2026-11-17";
+  }
+  if (model.components.length > 3000)
+    throw new Error(
+      "Adding bracing would exceed the 3,000 saved-component limit. Upgrade fewer custom walls.",
+    );
+  return model;
 }

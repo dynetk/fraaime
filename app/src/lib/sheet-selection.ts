@@ -4,6 +4,7 @@ import type { Manifest, Sheet } from "./worker";
 export const MAX_SHELL_PAGES = 24;
 export const SHELL_SHEET_KINDS = [
   "floor-plan",
+  "ceiling-plan",
   "section",
   "elevation",
   "roof-plan",
@@ -15,6 +16,7 @@ export const SHELL_SHEET_KINDS = [
 /** Prefer standalone drawing titles over incidental words in notes and legends. */
 function titleKind(rawText: string): string {
   const text = rawText
+    .replace(/\breflected\s+ceiling\s+plans?\b/gi, "REFLECTED CEILING PLAN")
     .replace(/\b(interior|wall)\s*\n\s*(elevations?|sections?)\b/gi, "$1 $2")
     .replace(/\broof\s*\n\s*framing(?:\s*\n\s*plan)?\b/gi, "ROOF FRAMING PLAN")
     .replace(/\b(roof(?:\s+deck)?|floor)\s*\n\s*plan\b/gi, "$1 plan");
@@ -53,6 +55,15 @@ function titleKind(rawText: string): string {
     return lines.some((line) => /^ROOF FRAMING/i.test(line))
       ? "roof-framing"
       : "support";
+  // RCPs carry room-specific ceiling heights; they are core geometry evidence.
+  if (
+    lines.some((line) =>
+      /^(?:(?:proposed|new|existing)\s+)?(?:(?:(?:\d+(?:st|nd|rd|th)?|first|second|third|ground|main|upper|lower|basement)\s+)?(?:floor|level)\s+)?(?:(?:reflected\s+)?ceiling\s+plans?|rcp(?:\s*[-–]\s*(?:1st|2nd|3rd|first|second|third|ground|main|upper|lower)\s+floor)?)$/i.test(
+        line,
+      ),
+    )
+  )
+    return "ceiling-plan";
   let kind = "unclassified";
   for (const line of lines) {
     if (
@@ -132,7 +143,14 @@ export function suggestedPlanPages(
   const sheets = manifest?.sheets ?? [];
   // Architectural geometry and schedules are dependencies, not optional fillers.
   // Keep all of them even over the limit so the UI can require an explicit choice.
-  const core = ["floor-plan", "roof-plan", "elevation", "section", "schedule"];
+  const core = [
+    "floor-plan",
+    "ceiling-plan",
+    "roof-plan",
+    "elevation",
+    "section",
+    "schedule",
+  ];
   const selected = new Set(
     sheets
       .filter(
@@ -182,6 +200,7 @@ export function selectionWarnings(manifest: Manifest | null, pages: number[]) {
   const selected = new Set(pages);
   const critical = [
     "floor-plan",
+    "ceiling-plan",
     "roof-plan",
     "section",
     "elevation",

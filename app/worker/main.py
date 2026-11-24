@@ -90,6 +90,8 @@ def reader(path: Path, max_pages: int):
 
 def classify(text: str):
     t = text.lower()
+    if re.search(r'(?m)^\s*(?:(?:(?:first|second|third|1st|2nd|3rd|ground|main|upper|lower|basement)\s+)?floor\s+)?(?:(?:reflected\s+)?ceiling\s+plans?|rcp(?:\s*[-–]\s*(?:1st|2nd|3rd|first|second|third|ground|main|upper|lower)\s+floor)?)\s*$', t):
+        return 'ceiling-plan'
     for label, pattern in [('schedule', r'(door|window).{0,20}schedule'), ('roof-plan', r'roof\s+plan'), ('floor-plan', r'(floor|level|ground|main)\s+plan'), ('elevation', r'elevations?'), ('section', r'building\s+sections?')]:
         if re.search(pattern, t):
             return label

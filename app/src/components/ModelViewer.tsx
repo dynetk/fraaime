@@ -6,7 +6,14 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { BuildingModel, wallPieces, length } from "@/lib/model";
 import { transformElement, addElement } from "@/lib/editing";
 import { modelWallFraming, polygonFraming, roofHeight } from "@/lib/framing";
+import {
+  modelTrusses,
+  zoneOutline,
+  withoutTrussCoverage,
+  TRUSS_WIDTH,
+} from "@/lib/trusses";
 type Props = {
+  trussSelection: "member" | "assembly";
   model: BuildingModel;
   selected: string | null;
   mode: "translate" | "rotate" | "scale";
@@ -78,8 +85,13 @@ export default function ModelViewer(props: Props) {
           p.mode === "scale" ||
           p.model.components.some((c) => c.id === p.selected) ||
           p.model.openings.some((o) => o.id === p.selected) ||
-          p.model.levels.some((l) => l.id === p.selected);
+          p.model.levels.some((l) => l.id === p.selected) ||
+          !!g.userData.truss;
         transform.showZ = p.mode !== "rotate";
+        if (g.userData.truss && p.mode === "scale") {
+          transform.showY = false;
+          if (g.userData.trussMember) transform.showZ = false;
+        }
       }
     };
     transform.addEventListener("dragging-changed", (e) => {
@@ -193,7 +205,7 @@ export default function ModelViewer(props: Props) {
     const clear = () => {
       transform.detach();
       root.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
+        if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
           if (o instanceof THREE.InstancedMesh) o.dispose();
           o.geometry.dispose();
           const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -214,6 +226,7 @@ export default function ModelViewer(props: Props) {
       clear();
       const p = latest.current,
         m = p.model;
+      const trussData = p.framing ? modelTrusses(m) : null;
       const panelFrames = p.framing ? modelWallFraming(m, p.spacing) : null;
       const visible = (id: string) => !p.levelId || p.levelId === id;
       for (const l of m.levels) {
@@ -225,9 +238,15 @@ export default function ModelViewer(props: Props) {
         if (p.framing) {
           memberLines(
             g,
-            polygonFraming(l.outline, l.voids, p.spacing).map((line) => ({
-              start: [line.start[0] - cx, -75, line.start[1] - cz],
-              end: [line.end[0] - cx, -75, line.end[1] - cz],
+            withoutTrussCoverage(
+              m,
+              polygonFraming(l.outline, l.voids, p.spacing).map((line) => ({
+                start: [line.start[0], l.elevation, line.start[1]],
+                end: [line.end[0], l.elevation, line.end[1]],
+              })),
+            ).map((line) => ({
+              start: [line.start[0] - cx, -75, line.start[2] - cz],
+              end: [line.end[0] - cx, -75, line.end[2] - cz],
             })),
             p.selected === l.id ? "#fff895" : "#acacac",
           );
@@ -273,7 +292,7 @@ export default function ModelViewer(props: Props) {
         if (p.framing) {
           if (m.framingAssemblies?.some((a) => a.wallId === w.id)) continue;
           const pieces = panelFrames?.get(w.id) ?? [];
-          for (const kind of ["stud", "track", "header"] as const) {
+          for (const kind of ["stud", "track", "header", "brace"] as const) {
             members(
               g,
               pieces
@@ -300,9 +319,11 @@ export default function ModelViewer(props: Props) {
                 ? "#fff895"
                 : kind === "header"
                   ? "#4b412b"
-                  : kind === "track"
-                    ? "#544f4c"
-                    : "#acacac",
+                  : kind === "brace"
+                    ? "#827129"
+                    : kind === "track"
+                      ? "#544f4c"
+                      : "#acacac",
               pieces.flatMap((v, index) => (v.kind === kind ? [index] : [])),
             );
           }
@@ -401,6 +422,152 @@ export default function ModelViewer(props: Props) {
                 : "#acacac",
         );
       }
+      if (p.framing && trussData)
+        for (const z of m.trussZones ?? []) {
+          if (!visible(z.levelId)) continue;
+          const elev = m.levels.find((l) => l.id === z.levelId)?.elevation ?? 0;
+          const all = trussData.members.filter((v) => v.zoneId === z.id);
+          const isMember = all.some((v) => v.id === p.selected),
+            isTruss = all.some((v) => v.trussId === p.selected);
+          const selected = all.filter((v) =>
+            isMember
+              ? v.id === p.selected
+              : isTruss
+                ? v.trussId === p.selected
+                : false,
+          );
+          const rest = all.filter((v) => !selected.includes(v));
+          const drawMembers = (
+            id: string,
+            list: typeof all,
+            highlight: boolean,
+          ) => {
+            const g = group(id);
+            g.userData.truss = true;
+            const points = list.flatMap((v) => [v.start, v.end]);
+            const cx = points.length
+              ? (Math.min(...points.map((v) => v[0])) +
+                  Math.max(...points.map((v) => v[0]))) /
+                2
+              : z.center[0];
+            const cy = points.length
+              ? (Math.min(...points.map((v) => v[1])) +
+                  Math.max(...points.map((v) => v[1]))) /
+                2
+              : z.ceilingHeight;
+            const cz = points.length
+              ? (Math.min(...points.map((v) => v[2])) +
+                  Math.max(...points.map((v) => v[2]))) /
+                2
+              : z.center[1];
+            g.position.set(cx / 1000, (elev + cy) / 1000, cz / 1000);
+            if (list.length === 1 && id === list[0].id) {
+              const v = list[0],
+                d = new THREE.Vector3(...v.end).sub(
+                  new THREE.Vector3(...v.start),
+                );
+              g.userData.trussMember = true;
+              g.rotation.set(
+                0,
+                -Math.atan2(d.z, d.x),
+                Math.atan2(d.y, Math.hypot(d.x, d.z)),
+                "YXZ",
+              );
+              box(
+                g,
+                0,
+                0,
+                0,
+                d.length() / 1000,
+                0.038,
+                TRUSS_WIDTH / 1000,
+                highlight ? "#fff895" : "#544f4c",
+              );
+              return;
+            }
+            g.rotation.y = (-z.rotation * Math.PI) / 180;
+            const inv = new THREE.Quaternion().setFromAxisAngle(
+              new THREE.Vector3(0, 1, 0),
+              (z.rotation * Math.PI) / 180,
+            );
+            const matrices = list.map((v) => {
+              const a = new THREE.Vector3(...v.start)
+                .sub(new THREE.Vector3(cx, cy, cz))
+                .applyQuaternion(inv)
+                .multiplyScalar(0.001);
+              const b = new THREE.Vector3(...v.end)
+                .sub(new THREE.Vector3(cx, cy, cz))
+                .applyQuaternion(inv)
+                .multiplyScalar(0.001);
+              const dir = b.clone().sub(a),
+                len = dir.length();
+              dir.normalize();
+              const chord = all.find(
+                (m) =>
+                  m.trussId === v.trussId &&
+                  (m.role === "bottom chord" || m.role === "top chord"),
+              );
+              const axis = chord
+                ? new THREE.Vector3(
+                    chord.end[0] - chord.start[0],
+                    0,
+                    chord.end[2] - chord.start[2],
+                  )
+                    .applyQuaternion(inv)
+                    .normalize()
+                : new THREE.Vector3(
+                    z.width <= z.depth ? 1 : 0,
+                    0,
+                    z.width <= z.depth ? 0 : 1,
+                  );
+              const side = new THREE.Vector3()
+                .crossVectors(axis, new THREE.Vector3(0, 1, 0))
+                .normalize();
+              const up = new THREE.Vector3()
+                .crossVectors(side, dir)
+                .normalize();
+              return new THREE.Matrix4().compose(
+                a.add(b).multiplyScalar(0.5),
+                new THREE.Quaternion().setFromRotationMatrix(
+                  new THREE.Matrix4().makeBasis(dir, up, side),
+                ),
+                new THREE.Vector3(len, 0.038, TRUSS_WIDTH / 1000),
+              );
+            });
+            members(g, matrices, highlight ? "#fff895" : "#544f4c");
+            const mesh = g.children[0];
+            if (mesh) {
+              mesh.userData.trussMemberIds = list.map((v) => v.id);
+              mesh.userData.trussIds = list.map((v) => v.trussId);
+            }
+            if (!list.length) {
+              const ring = zoneOutline(z);
+              for (let i = 0; i < 4; i++) {
+                const a = ring[i],
+                  b = ring[(i + 1) % 4];
+                // Unconfirmed zone outlines remain selectable without implying generated trusses.
+                const line = new THREE.Line(
+                  new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(
+                      (a[0] - cx) / 1000,
+                      0,
+                      (a[1] - cz) / 1000,
+                    ).applyQuaternion(inv),
+                    new THREE.Vector3(
+                      (b[0] - cx) / 1000,
+                      0,
+                      (b[1] - cz) / 1000,
+                    ).applyQuaternion(inv),
+                  ]),
+                  new THREE.LineBasicMaterial({ color: 0x827129 }),
+                );
+                g.add(line);
+              }
+            }
+          };
+          drawMembers(z.id, rest, p.selected === z.id);
+          if (selected.length) drawMembers(p.selected!, selected, true);
+        }
       if (p.roofVisible)
         for (const r of m.roofs) {
           if (!visible(r.levelId)) continue;
@@ -411,21 +578,27 @@ export default function ModelViewer(props: Props) {
           if (p.framing) {
             memberLines(
               g,
-              polygonFraming(
-                r.vertices.map((v) => [v[0], v[2]]),
-                (r.voids ?? []).map((h) => h.map((v) => [v[0], v[2]])),
-                p.spacing,
+              withoutTrussCoverage(
+                m,
+                polygonFraming(
+                  r.vertices.map((v) => [v[0], v[2]]),
+                  (r.voids ?? []).map((h) => h.map((v) => [v[0], v[2]])),
+                  p.spacing,
+                ).map((line) => ({
+                  start: [
+                    line.start[0],
+                    roofHeight(r.vertices, line.start[0], line.start[1]),
+                    line.start[1],
+                  ],
+                  end: [
+                    line.end[0],
+                    roofHeight(r.vertices, line.end[0], line.end[1]),
+                    line.end[1],
+                  ],
+                })),
               ).map((line) => ({
-                start: [
-                  line.start[0] - cx,
-                  roofHeight(r.vertices, line.start[0], line.start[1]),
-                  line.start[1] - cz,
-                ],
-                end: [
-                  line.end[0] - cx,
-                  roofHeight(r.vertices, line.end[0], line.end[1]),
-                  line.end[1] - cz,
-                ],
+                start: [line.start[0] - cx, line.start[1], line.start[2] - cz],
+                end: [line.end[0] - cx, line.end[1], line.end[2] - cz],
               })),
               p.selected === r.id ? "#fff895" : "#acacac",
             );
@@ -498,6 +671,14 @@ export default function ModelViewer(props: Props) {
         return;
       point(e);
       const hit = ray.intersectObject(root, true)[0];
+      if (hit?.instanceId !== undefined && hit.object.userData.trussMemberIds) {
+        const key =
+          latest.current.trussSelection === "assembly"
+            ? "trussIds"
+            : "trussMemberIds";
+        latest.current.onSelect(hit.object.userData[key][hit.instanceId]);
+        return;
+      }
       if (hit?.instanceId !== undefined && hit.object.userData.memberIndices) {
         const wallId = hit.object.parent?.userData.elementId;
         if (wallId) {

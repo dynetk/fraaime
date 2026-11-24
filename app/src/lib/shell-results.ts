@@ -11,6 +11,9 @@ export type ShellResult = {
   openingsRequested?: boolean;
   openingsComplete?: boolean;
   detailDraft?: ShellDetailData;
+  roomsRequested?: boolean;
+  roomsOnly?: boolean;
+  roomsComplete?: boolean;
 };
 export type StoredResult = {
   page: number;
@@ -34,9 +37,18 @@ export function assembleStoredResults(
       allPages.filter((n) => !rows.some((r) => r.page === n)),
     );
   const detailed = rows.find((r) => r.page === -1);
+  const roomed = rows.find((r) => r.page === -3);
   const opened = rows.find((r) => r.page === -2);
   if (
-    rows.length !== 1 + (detailed ? 1 : 0) + (opened ? 1 : 0) ||
+    rows.length !==
+      1 + (detailed ? 1 : 0) + (opened ? 1 : 0) + (roomed ? 1 : 0) ||
+    (roomed &&
+      (roomed.result.kind !== "project-shell" ||
+        !roomed.result.roomsComplete ||
+        (!opened &&
+          !(
+            joint.result.kind === "project-shell" && joint.result.roomsOnly
+          )))) ||
     (opened &&
       (!detailed ||
         opened.result.kind !== "project-shell" ||
@@ -47,7 +59,9 @@ export function assembleStoredResults(
         !detailed.result.detailDraft))
   )
     throw Error("Mixed or invalid extraction checkpoints; start a fresh job.");
-  const model = ModelSchema.parse((opened ?? detailed ?? joint).result.model);
+  const model = ModelSchema.parse(
+    (roomed ?? opened ?? detailed ?? joint).result.model,
+  );
   const sourcePages = joint.result.sourcePages;
   const skipped = allPages.filter((n) => !sourcePages.includes(n));
   if (skipped.length)
@@ -56,6 +70,16 @@ export function assembleStoredResults(
       elementId: null,
       severity: "warning",
       message: `Only selected sheets were reconciled. ${skipped.length} other sheets remain unread: ${skipped.join(", ")}.`,
+      resolved: false,
+      resolution: "",
+    });
+  if (joint.result.roomsRequested && !roomed)
+    model.issues.push({
+      id: "coverage-room-stage",
+      elementId: null,
+      severity: "warning",
+      message:
+        "Room extraction did not complete. The saved shell is retained; room/truss coverage is incomplete.",
       resolved: false,
       resolution: "",
     });

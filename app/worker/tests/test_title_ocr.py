@@ -6,7 +6,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfReader, PdfWriter
 sys.path.insert(0,str(Path(__file__).parents[1]))
-from title_ocr import parse_tsv, ocr_file
+from title_ocr import parse_tsv, ocr_file, TITLE
 
 def test_confidence_and_coordinate_filtering():
     header='level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n'
@@ -59,3 +59,8 @@ def test_recognition_timeouts_remain_explicit(tmp_path,monkeypatch):
     assert result['status']=='failed'
     assert result['timedOutAttempts']==result['attempts']==16
     assert 'timed out' in result['error']
+
+
+@pytest.mark.parametrize('title',['RCP','RCP - 1ST FLOOR','1ST FLOOR RCP','2ND FLOOR REFLECTED CEILING PLAN','REFLECTED CEILING PLAN'])
+def test_ceiling_titles_stop_ocr_retries(title):
+    assert TITLE.fullmatch(title)

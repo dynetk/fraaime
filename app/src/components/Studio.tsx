@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useDialog } from "./useDialog";
 import Brand from "./Brand";
@@ -9,6 +9,8 @@ import {
   type ProcessingJob as Job,
 } from "@/lib/processing-jobs";
 import EstimatePanel from "./EstimatePanel";
+import { modelTrusses, generateTrusses } from "@/lib/trusses";
+import TrussPanel, { TrussSelection } from "./TrussPanel";
 import PanelConnections from "./PanelConnections";
 import { MOCK_ESTIMATE_SETTINGS } from "@/lib/estimate-settings";
 import { currentModelSnapshot } from "@/lib/model-snapshot";
@@ -22,7 +24,11 @@ import {
   length,
 } from "@/lib/model";
 import { addElement, removeElement, transformElement } from "@/lib/editing";
-import { editWallMember, resetWallFraming } from "@/lib/framing";
+import {
+  addBracingToCustomWalls,
+  editWallMember,
+  resetWallFraming,
+} from "@/lib/framing";
 import type { Manifest } from "@/lib/worker";
 import {
   selectedPlanPages,
@@ -74,6 +80,9 @@ type Detail = {
 };
 export default function Studio() {
   const { prompt, confirm, dialog } = useDialog();
+  const [trussSelection, setTrussSelection] = useState<"member" | "assembly">(
+    "member",
+  );
   const [session, setSession] = useState<{
     local: boolean;
     user: { email: string; role: string };
@@ -195,6 +204,14 @@ export default function Studio() {
       const parsed = ModelSchema.safeParse(next);
       if (!parsed.success) {
         setError("That edit is outside supported model limits.");
+        return;
+      }
+      try {
+        modelTrusses(parsed.data);
+      } catch (e) {
+        setError(
+          e instanceof Error ? e.message : "Unable to generate trusses.",
+        );
         return;
       }
       setPast((p) => [...p.slice(-49), model]);
@@ -328,6 +345,14 @@ export default function Studio() {
     change(result.model);
     setSelected(result.id);
   };
+  const trussElements = useMemo(
+    () => (model.trussZones ?? []).flatMap((z) => generateTrusses(z)),
+    [model],
+  );
+  const selectedTruss =
+    !!selected &&
+    (model.trussZones?.some((z) => z.id === selected) ||
+      trussElements.some((m) => m.id === selected || m.trussId === selected));
   const element = [
     ...model.walls,
     ...model.openings,
@@ -608,6 +633,23 @@ export default function Studio() {
                     </div>
                     {framing && (
                       <label>
+                        Truss selection{" "}
+                        <select
+                          aria-label="Truss selection"
+                          value={trussSelection}
+                          onChange={(e) =>
+                            setTrussSelection(
+                              e.target.value as "member" | "assembly",
+                            )
+                          }
+                        >
+                          <option value="member">Individual member</option>
+                          <option value="assembly">Whole truss</option>
+                        </select>
+                      </label>
+                    )}
+                    {framing && (
+                      <label>
                         Floor / roof spacing{" "}
                         <select
                           aria-label="Floor and roof framing spacing"
@@ -628,13 +670,16 @@ export default function Studio() {
                       and T junctions use separate butt-jointed panels with
                       aligned connection studs. Opening cripple studs start at
                       the center, at 16 inches maximum, with a four-piece box
-                      header. Spacing and member sizes are preview assumptions,
-                      not engineered specifications. Click a stud, track, or
-                      header to edit that member. First selection saves that
-                      wall’s layout as individual components; spacing and
-                      opening changes no longer regenerate it. Floor and roof
-                      members still select their assembly. Save your changes
-                      before leaving.
+                      header. Horizontal bracing runs continuously through studs
+                      at 4-foot increments from the bottom-track centerline,
+                      clipped at openings and horizontal members. Bracing and
+                      trusses are quantity-only pending pricing. Spacing and
+                      member sizes are preview assumptions, not engineered
+                      specifications. Click a stud, track, or header to edit
+                      that member. First selection saves that wall’s layout as
+                      individual components; spacing and opening changes no
+                      longer regenerate it. Floor and roof members still select
+                      their assembly. Save your changes before leaving.
                       <div className="frame-legend">
                         <span>● Studs</span>
                         <span>● Tracks / joists</span>
@@ -647,6 +692,33 @@ export default function Studio() {
                       model={model}
                       onChange={change}
                       onSelect={setSelected}
+                    />
+                  )}
+                  {framing &&
+                    model.framingAssemblies?.some((a) => !a.bracingVersion) && (
+                      <button
+                        onClick={() => {
+                          try {
+                            change(addBracingToCustomWalls(model));
+                          } catch (e) {
+                            setError(
+                              e instanceof Error
+                                ? e.message
+                                : "Unable to add bracing.",
+                            );
+                          }
+                        }}
+                      >
+                        Add bracing to older custom walls
+                      </button>
+                    )}
+                  {framing && (
+                    <TrussPanel
+                      model={model}
+                      onChange={change}
+                      selected={selected}
+                      onSelect={setSelected}
+                      onError={setError}
                     />
                   )}
                   <div className="toolbar">
@@ -737,6 +809,7 @@ export default function Studio() {
                         framing={framing}
                         spacing={spacing}
                         top={top}
+                        trussSelection={trussSelection}
                         onSelect={setSelected}
                         onChange={change}
                         onError={setError}
@@ -766,9 +839,18 @@ export default function Studio() {
                     </div>
                     <aside className="inspector">
                       <div className="section-label">
-                        {element ? "SELECTED ELEMENT" : "MODEL INSPECTOR"}
+                        {element || selectedTruss
+                          ? "SELECTED ELEMENT"
+                          : "MODEL INSPECTOR"}
                       </div>
-                      {!element ? (
+                      {selectedTruss && selected ? (
+                        <TrussSelection
+                          model={model}
+                          selected={selected}
+                          onChange={change}
+                          onSelect={setSelected}
+                        />
+                      ) : !element ? (
                         <>
                           <h3>Make it your own.</h3>
                           <p>
@@ -1226,7 +1308,7 @@ export default function Studio() {
                   <h2>Source sheets & processing</h2>
                   <p>
                     {session?.shellFusion
-                      ? "Floor plans, elevations, sections, roof plans, and opening schedules are selected automatically. Up to 24 sheets feed three budgeted stages: shell, walls/roofs, and door/window placement. Review supporting drawings before processing."
+                      ? "Floor plans, reflected ceiling plans, elevations, sections, roof plans, and opening schedules are selected automatically. Up to 24 sheets feed four budgeted stages: shell, walls/roofs, door/window placement, and separate room candidates. Review supporting drawings before processing."
                       : "Choose the drawings needed for the shell and schedules."}{" "}
                     Processing continues when this page is closed.
                   </p>
@@ -1276,6 +1358,41 @@ export default function Studio() {
                           })
                         }
                       />
+                      {viewedRevision && (
+                        <div className="actions">
+                          <button
+                            disabled={
+                              busy ||
+                              dirty ||
+                              !model.levels.length ||
+                              detail.jobs.some(
+                                (j) =>
+                                  j.plan_id === plan.id &&
+                                  ["preparing", "extracting"].includes(j.state),
+                              )
+                            }
+                            onClick={() =>
+                              run(async () => {
+                                await api(`plans/${plan.id}/rooms`, "POST", {
+                                  revisionId: viewedRevision,
+                                  pages: selections[plan.id] ?? [],
+                                });
+                                setNotice(
+                                  "Room extraction started on this saved model. Walls, openings and roofs are preserved. A separate draft will appear in Model revisions.",
+                                );
+                                await refresh();
+                              })
+                            }
+                          >
+                            Extract rooms on saved model
+                          </button>
+                          <span className="fineprint">
+                            {dirty ? "Save your edits first. " : ""}Uses the
+                            selected sheets and Sol; this is a billable
+                            room-only pass.
+                          </span>
+                        </div>
+                      )}
                       {!detail.jobs.some((j) => j.plan_id === plan.id) && (
                         <button
                           onClick={() =>
@@ -1297,9 +1414,9 @@ export default function Studio() {
                           <p className="fineprint">
                             {plan.manifest.pageCount} sheets ·{" "}
                             {selections[plan.id]?.length ?? 0} selected. Floor
-                            plans, sections, elevations, roof plans, and
-                            schedules are selected automatically for new
-                            uploads. You can adjust the selection before
+                            plans, ceiling plans, sections, elevations, roof
+                            plans, and schedules are selected automatically for
+                            new uploads. You can adjust the selection before
                             processing. Confirm sheet selection and scales
                             during review.{" "}
                             {session?.shellFusion

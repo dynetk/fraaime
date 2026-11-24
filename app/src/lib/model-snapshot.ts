@@ -10,5 +10,6 @@ export function currentModelSnapshot(input: BuildingModel): BuildingModel {
     ...model,
     estimate: estimate.settings,
     panelQuantities: estimate.wallPanels,
+    framingQuantities: estimate.framingQuantities,
   };
 }

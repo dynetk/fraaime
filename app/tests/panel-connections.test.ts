@@ -209,12 +209,13 @@ test("connection members remain editable, persisted and counted once in panel li
   // Subtract from unrounded quantities: panel display totals are rounded to
   // hundredths of a foot and cannot be used as an exact arithmetic baseline.
   const originalStudFeet = before.quantities
-    .filter((q) => q.elementId === "host" && ["stud", "header"].includes(q.kind))
+    .filter(
+      (q) =>
+        q.elementId === "host" && ["stud", "header", "brace"].includes(q.kind),
+    )
     .reduce((sum, q) => sum + q.lengthFt, 0);
   close(
-    Math.round(
-      (originalStudFeet - member.height / 304.8) * 100,
-    ) / 100,
+    Math.round((originalStudFeet - member.height / 304.8) * 100) / 100,
     removed.wallPanels.find((p) => p.wallId === "host")!.studLinearFeet,
   );
   assert.match(estimateCsv(after, null, false), /Connection stud LF/);

@@ -147,6 +147,25 @@ export default function EstimatePanel({
           </button>
         </div>
       </div>
+      {estimate && (
+        <div className="framing-note">
+          <strong>Quantity only — pricing pending</strong>
+          <br />
+          Horizontal bracing:{" "}
+          {estimate.framingQuantities.bracingLinearFeet.toLocaleString()} LF ·
+          Trusses: {estimate.framingQuantities.trussCount} assemblies /{" "}
+          {estimate.framingQuantities.trussMemberCount} members /{" "}
+          {estimate.framingQuantities.trussLinearFeet.toLocaleString()} LF.
+          <p>
+            These quantities are included in exports but excluded from the
+            dollar total. This is a partial mock estimate until the new
+            estimating rules are confirmed.
+          </p>
+          {estimate.framingQuantities.warnings.map((w, i) => (
+            <p key={i}>{w}</p>
+          ))}
+        </div>
+      )}
       <p className="fineprint">
         All modeled levels are included, even when hidden in the viewer.{" "}
         {dirty
@@ -165,7 +184,7 @@ export default function EstimatePanel({
         <>
           <div className="estimate-summary">
             <div className="estimate-total">
-              <span>Mock framing total · tax excluded</span>
+              <span>Partial mock framing total · tax excluded</span>
               <strong data-testid="estimate-total">
                 {dollars(estimate.total)}
               </strong>
@@ -192,20 +211,23 @@ export default function EstimatePanel({
           <details>
             <summary>Wall panel quantities · linear feet before waste</summary>
             <p className="fineprint">
-              Stud totals include both C members in each box header. Tracks are
-              shown separately and in the combined total, at one shared price
-              per linear foot. Door/window unit sizes are used as provisional
-              framing openings without manufacturer clearance. Header profiles
-              are schematic. Connection studs are included once in these totals.
-              Automatic wall stud spacing is capped at 16 inches on center.
+              C-member totals include header studs and horizontal bracing.
+              Bracing is tracked separately below and remains unpriced. Tracks
+              are shown separately and in the combined total, at one shared
+              price per linear foot. Door/window unit sizes are used as
+              provisional framing openings without manufacturer clearance.
+              Header profiles are schematic. Connection studs are included once
+              in these totals. Automatic wall stud spacing is capped at 16
+              inches on center.
             </p>
             <div style={{ overflowX: "auto" }}>
               <table>
                 <thead>
                   <tr>
                     <th>Panel</th>
-                    <th>Studs + header studs</th>
+                    <th>C members incl. HB</th>
                     <th>Tracks</th>
+                    <th>HB LF (unpriced subset)</th>
                     <th>Total LF</th>
                     <th>Review</th>
                   </tr>
@@ -216,6 +238,9 @@ export default function EstimatePanel({
                       <td>{panel.label}</td>
                       <td>{panel.studLinearFeet.toFixed(2)}</td>
                       <td>{panel.trackLinearFeet.toFixed(2)}</td>
+                      <td>
+                        {(panel.horizontalBracingLinearFeet ?? 0).toFixed(2)}
+                      </td>
                       <td>{panel.totalLinearFeet.toFixed(2)}</td>
                       <td>
                         {panel.openingSizesToVerify} opening sizes ·{" "}

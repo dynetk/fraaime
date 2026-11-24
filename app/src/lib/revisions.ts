@@ -1,6 +1,7 @@
 import { BuildingModel, ModelSchema, validateModel } from "./model";
 import { Database, uid, now, audit } from "./db";
 import { HttpError } from "./access";
+import { modelTrusses } from "./trusses";
 import { currentModelSnapshot } from "./model-snapshot";
 export async function saveRevision(
   db: Database,
@@ -13,7 +14,8 @@ export async function saveRevision(
   const model = currentModelSnapshot(ModelSchema.parse(input));
   if (
     reviewed &&
-    (validateModel(model).some((i) => i.severity === "error") ||
+    (modelTrusses(model).warnings.length > 0 ||
+      validateModel(model).some((i) => i.severity === "error") ||
       model.issues.some((i) => !i.resolved) ||
       model.calibrations.some((c) => !c.confirmed))
   )

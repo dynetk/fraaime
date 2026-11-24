@@ -193,6 +193,12 @@ async function prepare(jobId: string) {
     manifest: plan.rows[0].manifest,
     name: plan.rows[0].name,
     fusion,
+    rooms:
+      fusion &&
+      (calls.rows.length
+        ? calls.rows.some((c) => c.result?.roomsRequested)
+        : process.env.FRAAIME_SHELL_DETAILS === "1"),
+    roomsOnly: calls.rows.some((c) => c.result?.roomsOnly),
     openings:
       fusion &&
       (calls.rows.length
@@ -219,11 +225,14 @@ async function extractProjectShell(
   detailStage = false,
   openingStage = false,
   openingsRequested = false,
+  roomsRequested = false,
+  roomStage = false,
+  roomsOnly = false,
 ) {
   "use step";
   const j = await getJob(jobId),
     db = await database();
-  const checkpoint = openingStage ? -2 : detailStage ? -1 : 0;
+  const checkpoint = roomStage ? -3 : openingStage ? -2 : detailStage ? -1 : 0;
   const old = await db.query<{ state: string; result: ShellResult }>(
     "SELECT state,result FROM ai_calls WHERE job_id=$1 AND page=$2",
     [jobId, checkpoint],
@@ -239,7 +248,7 @@ async function extractProjectShell(
     ? (
         await db.query<{ result: ShellResult }>(
           "SELECT result FROM ai_calls WHERE job_id=$1 AND page=$2 AND state='complete'",
-          [jobId, openingStage ? -1 : 0],
+          [jobId, roomStage ? (roomsOnly ? 0 : -2) : openingStage ? -1 : 0],
         )
       ).rows[0]?.result
     : undefined;
@@ -254,6 +263,7 @@ async function extractProjectShell(
           base!.model,
           base!.draft,
           openingStage,
+          roomStage,
         )
       : buildShellRequest(pages, j.plan_id, name),
   );
@@ -299,11 +309,13 @@ async function extractProjectShell(
   });
   await phase(
     jobId,
-    openingStage
-      ? "Matching door/window schedules and placing openings"
-      : detailStage
-        ? "Adding interior/exterior walls and roof surfaces"
-        : "Reconciling floor plans, elevations, and sections",
+    roomStage
+      ? "Extracting room candidates without changing the saved shell"
+      : openingStage
+        ? "Matching door/window schedules and placing openings"
+        : detailStage
+          ? "Adding interior/exterior walls and roof surfaces"
+          : "Reconciling floor plans, elevations, and sections",
   );
   try {
     const result = detailStage
@@ -313,6 +325,7 @@ async function extractProjectShell(
           base!.model,
           base!.draft,
           openingStage,
+          roomStage,
         )
       : await extractShell(pages, j.plan_id, name);
     const stored: ShellResult = {
@@ -322,10 +335,15 @@ async function extractProjectShell(
       sourcePages: j.pages,
       detailRequested,
       openingsRequested,
+      roomsRequested,
+      roomsOnly,
+      ...(roomStage
+        ? { roomsComplete: true, openingsComplete: base!.openingsComplete }
+        : {}),
       ...(openingStage ? { openingsComplete: true } : {}),
       ...(detailStage
         ? {
-            detailDraft: (openingStage
+            detailDraft: (openingStage || roomStage
               ? base!.detailDraft
               : result.draft) as NonNullable<ShellResult["detailDraft"]>,
           }
@@ -381,14 +399,16 @@ async function extractProjectShell(
           : null,
       ],
     );
-    const stage = openingStage
-      ? "Door/window placement"
-      : detailStage
-        ? "Wall/roof extraction"
-        : "Shell extraction";
+    const stage = roomStage
+      ? "Room extraction"
+      : openingStage
+        ? "Door/window placement"
+        : detailStage
+          ? "Wall/roof extraction"
+          : "Shell extraction";
     throw new FatalError(
       details?.status === "incomplete" && details.reason === "max_output_tokens"
-        ? `${stage} reached the AI output limit (${u?.outputTokens ?? "maximum"} tokens). Completed stages are saved. ${openingStage ? "Resume processing to retry only the unfinished opening stage; this makes a new billable AI call." : "Review this attempt before starting a separate extraction."}`
+        ? `${stage} reached the AI output limit (${u?.outputTokens ?? "maximum"} tokens). Completed stages are saved. ${openingStage || roomStage ? `Resume processing to retry only the unfinished ${roomStage ? "room" : "opening"} stage; this makes a new billable AI call.` : "Review this attempt before starting a separate extraction."}`
         : `${stage} stopped: ${processingErrorMessage(error)} No automatic duplicate API call will be made.`,
     );
   }
@@ -591,8 +611,9 @@ export async function processPlan(jobId: string, mode: "inspect" | "extract") {
         false,
         false,
         prepared.openings,
+        prepared.rooms,
       );
-      if (prepared.details)
+      if (prepared.details && !prepared.roomsOnly)
         await extractProjectShell(
           jobId,
           prepared.name,
@@ -601,8 +622,20 @@ export async function processPlan(jobId: string, mode: "inspect" | "extract") {
           false,
           prepared.openings,
         );
-      if (prepared.openings)
+      if (prepared.openings && !prepared.roomsOnly)
         await extractProjectShell(jobId, prepared.name, true, true, true, true);
+      if (prepared.rooms)
+        await extractProjectShell(
+          jobId,
+          prepared.name,
+          prepared.details,
+          true,
+          false,
+          prepared.openings,
+          true,
+          true,
+          prepared.roomsOnly,
+        );
       await finish(jobId);
       return;
     }

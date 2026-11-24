@@ -20,10 +20,7 @@ test("export replaces historical quantities and reflects unsaved wall edits with
     JSON.parse(JSON.stringify(currentModelSnapshot(model))),
   );
   assert.equal(JSON.stringify(model), original);
-  assert.equal(
-    exported.panelQuantities![0].source,
-    "lorenzo-panel-connections-v3",
-  );
+  assert.equal(exported.panelQuantities![0].source, "lorenzo-panel-bracing-v4");
   assert.equal(
     buildEstimate(exported).quantities.filter((q) => q.kind === "stud").length,
     16,

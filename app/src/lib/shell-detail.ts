@@ -27,6 +27,22 @@ const dimension = z.object({
 });
 export const ShellDetailDraft = z.object({
   version: z.literal(1),
+  roomZones: z
+    .array(
+      z.object({
+        id: z.string(),
+        roomId: z.string(),
+        label: z.string(),
+        levelId: z.string(),
+        corners: z.array(point).length(4),
+        ceilingHeight: dimension,
+        kind: z.enum(["ceiling", "shared-floor-ceiling", "slab-on-grade"]),
+        upperLevelId: z.string().nullable(),
+        evidence: z.array(source).min(1).max(8),
+      }),
+    )
+    .max(200)
+    .default([]),
   wallRemovals: z
     .array(
       z.object({
@@ -150,7 +166,9 @@ const StrictOpenings = ShellDetailDraft.shape.openings.element
   })
   .array()
   .max(250);
-export const DetailResponseSchema = ShellDetailDraft.extend({
+export const DetailResponseSchema = ShellDetailDraft.omit({
+  roomZones: true,
+}).extend({
   wallRemovals: ShellDetailDraft.shape.wallRemovals.removeDefault(),
   roofOpenings: ShellDetailDraft.shape.roofOpenings.removeDefault(),
   openings: StrictOpenings,
@@ -999,6 +1017,81 @@ export function compileShellDetail(
       missing.length ? "error" : "warning",
     );
     return ModelSchema.parse(m);
+  }
+  // Room zones are source-backed candidates. Confirmation belongs to the reviewer;
+  // existing zones (especially manual layouts) are never overwritten on a rerun.
+  m.trussZones ??= [];
+  for (const room of draft.roomZones) {
+    const t = transforms.get(room.levelId),
+      height = dim(room.ceilingHeight);
+    const level = m.levels.find((l) => l.id === room.levelId),
+      sourceLevel = baseDraft.levels.find((l) => l.id === room.levelId);
+    const evidence = ev([...room.evidence, ...room.ceilingHeight.evidence]);
+    if (
+      !t ||
+      !level ||
+      height === null ||
+      height < 0 ||
+      height > 30000 ||
+      !evidence.some((e) => e.page === sourceLevel?.planPage)
+    ) {
+      reject(
+        room,
+        "room-zone",
+        "Room bounds or ceiling height lack calibrated plan/height evidence.",
+      );
+      continue;
+    }
+    if (
+      m.trussZones.some(
+        (z) =>
+          z.id === id(room.id) ||
+          (z.roomId === room.roomId &&
+            z.levelId === room.levelId &&
+            z.confirmed),
+      )
+    )
+      continue;
+    const points = room.corners.map(t),
+      a = points[0],
+      b = points[1],
+      d = points[3];
+    const width = distance(a, b),
+      depth = distance(a, d);
+    const dot = (b[0] - a[0]) * (d[0] - a[0]) + (b[1] - a[1]) * (d[1] - a[1]);
+    if (
+      width < 100 ||
+      depth < 100 ||
+      Math.abs(dot) / (width * depth) > 0.01 ||
+      distance(points[2], [b[0] + d[0] - a[0], b[1] + d[1] - a[1]]) > 20 ||
+      points.some(
+        (p, i) =>
+          !segmentInFloor(p, points[(i + 1) % 4], level.outline, level.voids),
+      )
+    ) {
+      reject(
+        room,
+        "room-zone",
+        "Room zone must be rectangular and inside the floor footprint, excluding voids.",
+      );
+      continue;
+    }
+    m.trussZones.push({
+      id: id(room.id),
+      roomId: room.roomId,
+      label: room.label,
+      levelId: room.levelId,
+      center: [(a[0] + points[2][0]) / 2, (a[1] + points[2][1]) / 2],
+      width,
+      depth,
+      rotation: (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI,
+      ceilingHeight: height,
+      kind: room.kind,
+      upperLevelId: room.upperLevelId,
+      confirmed: false,
+      evidence,
+      inferred: true,
+    });
   }
   const coverage = roofCoverage(m);
   m.detailProvenance = {

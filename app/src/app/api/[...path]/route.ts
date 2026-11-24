@@ -23,6 +23,7 @@ import {
 import { MAX_SHELL_PAGES } from "@/lib/shell-provider";
 import { pricing } from "@/lib/extraction";
 import { saveSheetReview } from "@/lib/sheet-review";
+import { createRoomJob } from "@/lib/room-job";
 import { resumeCompletedStages } from "@/lib/extraction-recovery";
 import { processPlan } from "@/workflows/process-plan";
 export const runtime = "nodejs";
@@ -323,6 +324,35 @@ const handler = route(async (r) => {
       user,
       r.method === "GET" ? "read" : "edit",
     );
+    if (action === "rooms" && r.method === "POST") {
+      if (!process.env.OPENAI_API_KEY)
+        throw new HttpError(503, "OpenAI is not configured.");
+      const jobId = await createRoomJob(
+        db,
+        plan.project_id,
+        id,
+        user.email,
+        await json(r),
+      );
+      try {
+        const { start } = await import("workflow/api");
+        const run = await start(processPlan, [jobId, "extract"]);
+        await db.query("UPDATE jobs SET run_id=$1 WHERE id=$2", [
+          run.runId,
+          jobId,
+        ]);
+      } catch {
+        await db.query(
+          "UPDATE jobs SET state='failed',error='Could not start room processing; resume this attempt.',updated_at=$1 WHERE id=$2",
+          [now(), jobId],
+        );
+        throw new HttpError(
+          503,
+          "Could not start room processing. Resume this attempt; the saved model is unchanged.",
+        );
+      }
+      return Response.json({ jobId });
+    }
     if (action === "review" && r.method === "POST")
       return Response.json(
         await saveSheetReview(db, id, user.email, await json(r)),

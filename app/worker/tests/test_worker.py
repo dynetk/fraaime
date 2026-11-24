@@ -127,3 +127,8 @@ def test_clipping_preserves_direction_and_rejects_invisible():
     from main import clip_segment
     assert clip_segment([-10,110,110,-10],100,100)==[0,100,100,0]
     assert clip_segment([-10,0,-10,100],100,100) is None
+
+
+def test_ceiling_plan_classification():
+    for title in ['RCP','1ST FLOOR RCP','FIRST FLOOR REFLECTED CEILING PLAN','REFLECTED\nCEILING\nPLAN']:
+        assert classify(title) == 'ceiling-plan'

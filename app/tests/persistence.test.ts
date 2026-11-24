@@ -77,6 +77,7 @@ test("revision transactions prevent stale overwrites and keep reruns separate", 
     ...clean,
     estimate: MOCK_ESTIMATE_SETTINGS,
     panelQuantities: buildEstimate(clean).wallPanels,
+    framingQuantities: buildEstimate(clean).framingQuantities,
   });
   assert.equal(saved.rows[0].reviewed, true);
   await db.close?.();

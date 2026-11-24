@@ -1,3 +1,4 @@
+import { transformTrussElement, removeTrussElement } from "./trusses";
 import { BuildingModel, type WallData, length } from "./model";
 import { resetWallFraming } from "./framing";
 export type Transform = {
@@ -14,6 +15,8 @@ export function transformElement(
   id: string,
   t: Transform,
 ): BuildingModel {
+  const trussEdit = transformTrussElement(input, id, t);
+  if (trussEdit) return trussEdit;
   const m = structuredClone(input),
     w = m.walls.find((e) => e.id === id),
     c = m.components.find((e) => e.id === id),
@@ -122,6 +125,8 @@ export function transformElement(
   return m;
 }
 export function removeElement(input: BuildingModel, id: string) {
+  const trussEdit = removeTrussElement(input, id);
+  if (trussEdit) return trussEdit;
   const m = input.walls.some((w) => w.id === id)
     ? resetWallFraming(input, id)
     : structuredClone(input);
@@ -138,6 +143,13 @@ export function removeElement(input: BuildingModel, id: string) {
     m.components = m.components.filter((c) => c.levelId !== id);
     m.roofs = m.roofs.filter((r) => r.levelId !== id);
     m.levels = m.levels.filter((l) => l.id !== id);
+    m.trussZones = m.trussZones
+      ?.filter((z) => z.levelId !== id)
+      .map((z) =>
+        z.upperLevelId === id
+          ? { ...z, upperLevelId: null, confirmed: false }
+          : z,
+      );
     m.framingAssemblies = m.framingAssemblies?.filter(
       (a) => !walls.has(a.wallId),
     );

@@ -11,7 +11,7 @@ from PIL import Image
 
 OCR_VERSION = 2
 # Used only to stop orientation retries, not to determine a building's geometry.
-TITLE = re.compile(r'^(?:(?:(?:first|second|third|1st|2nd|3rd|ground|main|upper|lower|basement)\s+)?floor\s+plan(?:\s*\([^)]*\))?|roof(?:\s+(?:deck|framing))?\s+plan|(?:(?:exterior|interior|ext\.)\s+elevations?|elevations)(?:\s*\([^)]*\))?|(?:(?:building|cross|partial|long|short)[ -]+sections?|sections)|(?:site|electrical|power|lighting|framing|foundation)\s+plan|(?:not\s+used|slab\s+plan|general\s+notes|sheet\s+index|drawing\s+index|index\s+of\s+drawings|drawing\s+list|cover\s+sheet|title\s+sheet)|(?:(?:door|window|door\s*&\s*window)\s+)?schedules?(?:\s*&\s*details)?|(?:[A-Z][A-Z-]*\s+){0,4}details)[,&: ]*$', re.I)
+TITLE = re.compile(r'^(?:(?:(?:first|second|third|1st|2nd|3rd|ground|main|upper|lower|basement)\s+)?floor\s+plan(?:\s*\([^)]*\))?|(?:(?:(?:first|second|third|1st|2nd|3rd|ground|main|upper|lower|basement)\s+)?floor\s+)?(?:(?:reflected\s+)?ceiling\s+plans?|rcp(?:\s*[-–]\s*(?:1st|2nd|3rd|first|second|third|ground|main|upper|lower)\s+floor)?)|roof(?:\s+(?:deck|framing))?\s+plan|(?:(?:exterior|interior|ext\.)\s+elevations?|elevations)(?:\s*\([^)]*\))?|(?:(?:building|cross|partial|long|short)[ -]+sections?|sections)|(?:site|electrical|power|lighting|framing|foundation)\s+plan|(?:not\s+used|slab\s+plan|general\s+notes|sheet\s+index|drawing\s+index|index\s+of\s+drawings|drawing\s+list|cover\s+sheet|title\s+sheet)|(?:(?:door|window|door\s*&\s*window)\s+)?schedules?(?:\s*&\s*details)?|(?:[A-Z][A-Z-]*\s+){0,4}details)[,&: ]*$', re.I)
 
 def parse_tsv(data: str, width: int, height: int):
     groups = {}

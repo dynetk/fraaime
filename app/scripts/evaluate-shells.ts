@@ -1,6 +1,7 @@
 import { countRequestReservation } from "../src/lib/request-budget";
 /** Joint-sheet evaluation. Private artifacts only; never writes production or project revisions. */
 import OpenAI from "openai";
+import { ROOM_PROMPT_VERSION } from "../src/lib/room-extraction";
 import {
   readFile,
   writeFile,
@@ -38,7 +39,8 @@ if (!manifestArg || !outputArg)
 const manifestFile = path.resolve(manifestArg),
   out = path.resolve(outputArg),
   live = flags.includes("--run"),
-  details = flags.includes("--details");
+  rooms = flags.includes("--rooms"),
+  details = flags.includes("--details") || rooms;
 const budget = Number(
   flags.find((f) => f.startsWith("--budget="))?.split("=")[1] ?? 20,
 );
@@ -66,6 +68,8 @@ const lockFile = path.join(out, ".running");
 const lock = live ? await open(lockFile, "wx", 0o600) : undefined;
 const code = await Promise.all(
   [
+    "../src/lib/room-extraction.ts",
+    "../src/lib/trusses.ts",
     "../src/lib/shell.ts",
     "../src/lib/shell-provider.ts",
     "../src/lib/shell-detail.ts",
@@ -123,9 +127,11 @@ try {
           ),
         ).draft
       : null;
-    const promptVersion = details
-      ? DETAIL_PROMPT_VERSION
-      : SHELL_PROMPT_VERSION;
+    const promptVersion = rooms
+      ? ROOM_PROMPT_VERSION
+      : details
+        ? DETAIL_PROMPT_VERSION
+        : SHELL_PROMPT_VERSION;
     const pages = texts.map((t) => JSON.parse(t) as PageEvidence);
     const fingerprint = createHash("sha256")
       .update(
@@ -168,6 +174,8 @@ try {
                 "evaluation-" + project.id,
                 base,
                 baseDraft,
+                false,
+                rooms,
               )
             : buildShellRequest(pages, "evaluation-" + project.id, project.id),
         )
@@ -216,6 +224,8 @@ try {
             "evaluation-" + project.id,
             base,
             baseDraft,
+            false,
+            rooms,
           )
         : await extractShell(pages, "evaluation-" + project.id, project.id);
       Object.assign(record, {
