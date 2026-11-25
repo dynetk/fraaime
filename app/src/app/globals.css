@@ -1037,6 +1037,9 @@ td button {
 }
 
 .truss-panel { margin: 12px 0; }
+.height-review { border: 1px solid #ccc; padding: 16px; margin: 16px 0; }
+.height-room-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,280px),1fr)); gap: 10px; max-height: 280px; overflow: auto; margin: 16px 0; }
+.height-room-list label { display: block; }
 .truss-panel summary { cursor: pointer; padding: 10px 0; }
 .truss-zone-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-top: 16px; }
 .truss-zone-fields .fineprint, .truss-zone-fields .actions { grid-column: 1 / -1; }

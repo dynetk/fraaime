@@ -24,6 +24,7 @@ import {
 import { buildEstimate, estimateCsv } from "../src/lib/estimate";
 import { currentModelSnapshot } from "../src/lib/model-snapshot";
 import { transformElement, removeElement } from "../src/lib/editing";
+import { reviewRoomHeights } from "../src/lib/truss-height-review";
 const base = { evidence: [], inferred: true };
 function fixture(): BuildingModel {
   return {
@@ -479,4 +480,137 @@ test("unknown ceiling height retains an editable outline but never generates qua
   assert.equal(modelTrusses(m).members.length, 0);
   assert.match(modelTrusses(m).warnings.join(" "), /ceiling height required/);
   assert.equal(currentModelSnapshot(m).framingQuantities!.trussLinearFeet, 0);
+});
+
+test("reviewed bulk heights fill only selected unresolved rooms and persist their basis in exports", () => {
+  const m = fixture(),
+    z = zone({ confirmed: false, ceilingHeight: 0, heightUnresolved: true });
+  m.trussZones = [
+    z,
+    zone({ id: "known", confirmed: false, ceilingHeight: 2500 }),
+    zone({
+      id: "unselected",
+      confirmed: false,
+      heightUnresolved: true,
+      ceilingHeight: 0,
+    }),
+    zone({
+      id: "manual",
+      members: [],
+      heightUnresolved: true,
+      ceilingHeight: 0,
+    }),
+    zone({ id: "reviewed" }),
+    zone({
+      id: "other-floor",
+      levelId: "L2",
+      confirmed: false,
+      heightUnresolved: true,
+      ceilingHeight: 0,
+    }),
+  ];
+  m.issues.push({
+    id: "missing",
+    elementId: z.id,
+    severity: "warning",
+    message: "Room: ceiling height required.",
+    resolved: false,
+    resolution: "",
+  });
+  const before = structuredClone(m);
+  const r = reviewRoomHeights(m, {
+    levelId: "L1",
+    zoneIds: ["Z", "known", "manual", "reviewed", "other-floor"],
+    heightMm: 2743.2,
+    basis: "floor-model",
+    note: "Section A4.00 checked",
+    generate: false,
+  });
+  assert.deepEqual(m, before);
+  assert.equal(r.heightsApplied, 1);
+  assert.equal(r.model.trussZones![0].heightUnresolved, false);
+  assert.equal(r.model.trussZones![0].confirmed, false);
+  assert.deepEqual(r.model.trussZones!.slice(1), m.trussZones.slice(1));
+  assert.equal(r.model.issues.at(-1)!.resolved, true);
+  const snapshot = currentModelSnapshot(r.model);
+  assert.equal(
+    snapshot.trussZones![0].heightReview?.note,
+    "Section A4.00 checked",
+  );
+  assert.deepEqual(
+    ModelSchema.parse(JSON.parse(JSON.stringify(snapshot))).trussZones,
+    snapshot.trussZones,
+  );
+});
+test("reviewed rooms generate only after fitting real modeled faces; unsupported rooms retain useful heights", () => {
+  const m = fixture(),
+    z = zone({ confirmed: false, ceilingHeight: 0, heightUnresolved: true });
+  support(m, z);
+  m.trussZones = [
+    { ...z, width: z.width - 200 },
+    zone({
+      id: "floating",
+      label: "Floating",
+      confirmed: false,
+      center: [7000, 0],
+      heightUnresolved: true,
+      ceilingHeight: 0,
+    }),
+  ];
+  const r = reviewRoomHeights(m, {
+    levelId: "L1",
+    zoneIds: ["Z", "floating"],
+    heightMm: 2743.2,
+    basis: "reviewer-entered",
+    note: "Reviewed ceiling section",
+    generate: true,
+  });
+  assert.equal(r.heightsApplied, 2);
+  assert.equal(r.generatedRooms, 1);
+  assert.equal(r.messages.length, 1);
+  assert.equal(r.model.trussZones![0].width, z.width);
+  assert.equal(r.model.trussZones![1].ceilingHeight, 2743.2);
+  assert.equal(r.model.trussZones![1].confirmed, false);
+  assert(modelTrusses(r.model).members.length > 0);
+  assert(currentModelSnapshot(r.model).framingQuantities!.trussLinearFeet > 0);
+  assert.deepEqual(r.model.walls, m.walls);
+  assert.throws(
+    () =>
+      reviewRoomHeights(m, {
+        levelId: "L1",
+        zoneIds: ["Z"],
+        heightMm: 0,
+        basis: "floor-model",
+        note: "Test",
+        generate: false,
+      }),
+    /greater than zero/,
+  );
+});
+test("bulk confirmation cannot displace an existing accepted truss assembly on overlap", () => {
+  const m = fixture(),
+    z = zone();
+  support(m, z);
+  m.trussZones = [
+    {
+      ...z,
+      id: "candidate",
+      confirmed: false,
+      heightUnresolved: true,
+      ceilingHeight: 0,
+    },
+    z,
+  ];
+  const before = modelTrusses(m);
+  const r = reviewRoomHeights(m, {
+    levelId: "L1",
+    zoneIds: ["candidate"],
+    heightMm: z.ceilingHeight,
+    basis: "reviewer-entered",
+    note: "Source reviewed",
+    generate: true,
+  });
+  assert.equal(r.generatedRooms, 0);
+  assert.match(r.messages[0], /overlaps/);
+  assert.deepEqual(modelTrusses(r.model).members, before.members);
 });

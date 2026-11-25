@@ -10,6 +10,7 @@ import {
   type Zone,
 } from "@/lib/trusses";
 import { removeElement, transformElement } from "@/lib/editing";
+import TrussHeightReview from "./TrussHeightReview";
 const FT = 304.8;
 function Measure({
   label,
@@ -131,6 +132,28 @@ export default function TrussPanel({
         Confirm inside wall faces and ceiling height before generating. Pitched
         roofs follow separate rules.
       </p>
+      {!!model.trussZones?.length && (
+        <p role="status">
+          {result.zones.length} rooms counted ·{" "}
+          {
+            model.trussZones.filter(
+              (z) => z.kind !== "slab-on-grade" && z.heightUnresolved,
+            ).length
+          }{" "}
+          need heights ·{" "}
+          {
+            model.trussZones.filter(
+              (z) =>
+                z.kind !== "slab-on-grade" &&
+                !z.heightUnresolved &&
+                !z.confirmed,
+            ).length
+          }{" "}
+          await confirmation.
+          {result.members.length === 0 &&
+            " Zero means no room has passed review yet; it does not mean this project has no trusses."}
+        </p>
+      )}
       <button
         onClick={() => {
           const l = model.levels[0];
@@ -194,6 +217,15 @@ export default function TrussPanel({
             </option>
           ))}
         </select>
+      )}
+      {z && (
+        <TrussHeightReview
+          key={z.levelId}
+          model={model}
+          levelId={z.levelId}
+          onChange={onChange}
+          onError={onError}
+        />
       )}
       {z && (
         <div className="truss-zone-fields">
@@ -287,6 +319,10 @@ export default function TrussPanel({
               patch({
                 ceilingHeight: v,
                 heightUnresolved: false,
+                heightReview: {
+                  basis: "reviewer-entered",
+                  note: "Ceiling height entered individually by reviewer.",
+                },
                 confirmed: false,
               })
             }
@@ -386,6 +422,15 @@ export default function TrussPanel({
               Source: {e.sheet} · PDF page {e.page} · {e.note}
             </p>
           ))}
+          {z.heightReview && (
+            <p className="fineprint">
+              Height review: {z.heightReview.note} (
+              {z.heightReview.basis === "floor-model"
+                ? "floor-model value applied by reviewer"
+                : "reviewer-entered value"}
+              )
+            </p>
+          )}
           <div className="actions">
             <button onClick={() => onSelect(z.id)}>Select whole zone</button>
             {z.members && (

@@ -116,6 +116,12 @@ export const TrussMember = z.object({
 });
 export const TrussZone = z.object({
   heightUnresolved: z.boolean().optional(),
+  heightReview: z
+    .object({
+      basis: z.enum(["floor-model", "reviewer-entered"]),
+      note: z.string().min(1).max(1000),
+    })
+    .optional(),
   spanAxis: z.enum(["shorter", "width", "depth"]).optional(),
   ...base,
   roomId: id,
