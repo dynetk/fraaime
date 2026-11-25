@@ -24,6 +24,10 @@ import {
 import { buildEstimate, estimateCsv } from "../src/lib/estimate";
 import { currentModelSnapshot } from "../src/lib/model-snapshot";
 import { transformElement, removeElement } from "../src/lib/editing";
+import {
+  previewRoomTrusses,
+  individualHeightNeeded,
+} from "../src/lib/truss-review";
 import { reviewRoomHeights } from "../src/lib/truss-height-review";
 const base = { evidence: [], inferred: true };
 function fixture(): BuildingModel {
@@ -613,4 +617,125 @@ test("bulk confirmation cannot displace an existing accepted truss assembly on o
   assert.equal(r.generatedRooms, 0);
   assert.match(r.messages[0], /overlaps/);
   assert.deepEqual(modelTrusses(r.model).members, before.members);
+});
+
+test("guided preview needs no note, preserves source heights, and makes no changes before apply", () => {
+  const m = fixture(),
+    z = zone({ confirmed: false });
+  support(m, z);
+  m.trussZones = [z];
+  const before = structuredClone(m);
+  const r = previewRoomTrusses(m, {
+    levelId: "L1",
+    zoneIds: ["Z"],
+    suggestedHeightMm: null,
+    overrides: { Z: 1000 },
+  });
+  assert.deepEqual(m, before);
+  assert.equal(r.ready, 1);
+  assert.equal(r.rooms[0].origin, "detected");
+  assert.equal(r.model.trussZones![0].ceilingHeight, z.ceilingHeight);
+  assert.equal(r.model.trussZones![0].heightReview, undefined);
+  assert(r.memberCount > 0);
+  assert.equal(modelTrusses(m).members.length, 0);
+  assert.equal(
+    currentModelSnapshot(r.model).framingQuantities!.trussMemberCount,
+    r.memberCount,
+  );
+});
+test("guided preview records suggested height provenance and leaves failed rooms untouched", () => {
+  const m = fixture(),
+    z = zone({ confirmed: false, heightUnresolved: true, ceilingHeight: 0 });
+  support(m, z);
+  m.trussZones = [z, { ...z, id: "floating", center: [7000, 0] }];
+  const r = previewRoomTrusses(m, {
+    levelId: "L1",
+    zoneIds: ["Z", "floating"],
+    suggestedHeightMm: 3048,
+    overrides: {},
+  });
+  assert.equal(r.ready, 1);
+  assert.equal(r.rooms[0].origin, "suggested");
+  assert.equal(r.rooms[1].status, "geometry-needed");
+  assert.deepEqual(r.model.trussZones![1], m.trussZones[1]);
+  assert.equal(r.model.trussZones![0].heightReview?.basis, "floor-model");
+  assert.match(
+    r.model.trussZones![0].heightReview!.note,
+    /not established by extraction/,
+  );
+  assert.equal(m.trussZones[0].heightUnresolved, true);
+});
+test("garages and exceptional ceilings require individual heights, without blocking other rooms", () => {
+  const m = fixture(),
+    z = zone({
+      confirmed: false,
+      heightUnresolved: true,
+      ceilingHeight: 0,
+      label: "Garage — unconfirmed",
+    });
+  support(m, z);
+  m.trussZones = [z];
+  assert(individualHeightNeeded(z));
+  assert(
+    individualHeightNeeded({
+      ...z,
+      label: "Bedroom",
+      evidence: [
+        {
+          planId: "p",
+          page: 1,
+          sheet: "A4",
+          region: null,
+          note: "Dropped ceiling shown in section",
+        },
+      ],
+    }),
+  );
+  assert(!individualHeightNeeded({ ...z, label: "Bedroom" }));
+  const options = {
+    levelId: "L1",
+    zoneIds: ["Z"],
+    suggestedHeightMm: 3048,
+    overrides: {},
+  };
+  const r = previewRoomTrusses(m, options);
+  assert.equal(r.ready, 0);
+  assert.equal(r.rooms[0].status, "height-needed");
+  assert.equal(r.rooms[0].name, "Garage");
+  const explicit = previewRoomTrusses(m, {
+    ...options,
+    overrides: { Z: 2743.2 },
+  });
+  assert.equal(explicit.ready, 1);
+  assert.equal(explicit.rooms[0].origin, "entered");
+  assert.equal(
+    explicit.model.trussZones![0].heightReview?.basis,
+    "reviewer-entered",
+  );
+});
+test("invalid height produces a useful preview result; edited common height is marked user-entered", () => {
+  const m = fixture(),
+    z = zone({ confirmed: false, heightUnresolved: true, ceilingHeight: 0 });
+  support(m, z);
+  m.trussZones = [z];
+  for (const h of [null, NaN, -1, 0, 30001]) {
+    const r = previewRoomTrusses(m, {
+      levelId: "L1",
+      zoneIds: ["Z"],
+      suggestedHeightMm: h,
+      overrides: {},
+    });
+    assert.equal(r.rooms[0].status, "height-needed");
+    assert.equal(r.ready, 0);
+    assert.deepEqual(r.model, m);
+  }
+  const r = previewRoomTrusses(m, {
+    levelId: "L1",
+    zoneIds: ["Z"],
+    suggestedHeightMm: 2743.2,
+    suggestedBasis: "reviewer-entered",
+    overrides: {},
+  });
+  assert.equal(r.rooms[0].origin, "entered");
+  assert.equal(r.model.trussZones![0].heightReview?.basis, "reviewer-entered");
 });

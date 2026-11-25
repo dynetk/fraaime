@@ -1036,10 +1036,180 @@ td button {
   margin: 0;
 }
 
-.truss-panel { margin: 12px 0; }
-.height-review { border: 1px solid #ccc; padding: 16px; margin: 16px 0; }
-.height-room-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,280px),1fr)); gap: 10px; max-height: 280px; overflow: auto; margin: 16px 0; }
-.height-room-list label { display: block; }
-.truss-panel summary { cursor: pointer; padding: 10px 0; }
-.truss-zone-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-top: 16px; }
-.truss-zone-fields .fineprint, .truss-zone-fields .actions { grid-column: 1 / -1; }
+.truss-panel {
+  margin: 12px 0;
+}
+/* Guided truss review keeps the primary path separate from geometry editing. */
+.height-review {
+  border: 1px solid var(--line);
+  padding: 20px;
+  margin: 16px 0;
+  max-width: 1100px;
+}
+.height-review h3,
+.height-review h4 {
+  margin: 0;
+}
+.height-review > details {
+  margin: 16px 0;
+}
+.height-review summary,
+.truss-advanced > summary {
+  cursor: pointer;
+  line-height: 1.5;
+}
+.truss-review-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.truss-review-heading > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.truss-review-height {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  align-items: start;
+  gap: 24px;
+  background: var(--gray-100);
+  padding: 16px;
+  margin-top: 16px;
+}
+.truss-review-height p {
+  margin-bottom: 0;
+}
+.truss-review-height small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.truss-review-rooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.truss-review-room {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+.truss-review-room > label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+.truss-review-room input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+.truss-review-room details {
+  width: 100%;
+  font-size: 12px;
+}
+.truss-review-room details .field {
+  margin-top: 10px;
+}
+.height-origin {
+  display: inline-block;
+  background: var(--yellow);
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.height-origin.detected {
+  background: var(--gray-100);
+}
+.truss-review-primary {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 8px;
+  margin-top: 20px;
+}
+.truss-review-primary > button,
+.truss-review-result > button {
+  background: var(--yellow);
+  color: var(--black);
+  border-color: var(--yellow);
+  font-weight: 500;
+}
+.truss-review-primary > button:hover,
+.truss-review-result > button:hover {
+  background: var(--black);
+  border-color: var(--black);
+  color: var(--white);
+}
+.truss-review-result {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.truss-review-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.truss-review-problem details {
+  width: 100%;
+}
+.truss-advanced {
+  margin: 20px 0;
+}
+.truss-advanced > summary {
+  padding: 12px 0;
+  font-weight: 500;
+}
+@media (max-width: 640px) {
+  .height-review {
+    padding: 12px;
+  }
+  .truss-review-height {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+  .truss-review-rooms {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .truss-review-heading .actions {
+    flex-wrap: wrap;
+  }
+  .truss-review-primary > button,
+  .truss-review-result > button {
+    width: 100%;
+  }
+}
+.height-room-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 10px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 16px 0;
+}
+.height-room-list label {
+  display: block;
+}
+.truss-panel summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.truss-zone-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.truss-zone-fields .fineprint,
+.truss-zone-fields .actions {
+  grid-column: 1 / -1;
+}

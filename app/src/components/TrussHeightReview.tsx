@@ -1,28 +1,26 @@
 "use client";
 import { useState } from "react";
 import type { BuildingModel } from "@/lib/model";
-import { reviewRoomHeights } from "@/lib/truss-height-review";
+import {
+  feetInches,
+  individualHeightNeeded,
+  previewRoomTrusses,
+  roomName,
+} from "@/lib/truss-review";
 
 export default function TrussHeightReview({
   model,
   levelId,
   onChange,
   onError,
+  onEdit,
 }: {
   model: BuildingModel;
   levelId: string;
   onChange: (m: BuildingModel) => void;
   onError: (s: string) => void;
+  onEdit: (id: string) => void;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [height, setHeight] = useState("");
-  const [note, setNote] = useState("");
-  const [basis, setBasis] = useState<"floor-model" | "reviewer-entered">(
-    "reviewer-entered",
-  );
-  const [reviewed, setReviewed] = useState(false);
-  const [message, setMessage] = useState("");
-  const [problems, setProblems] = useState<string[]>([]);
   const level = model.levels.find((l) => l.id === levelId);
   const rooms = (model.trussZones ?? []).filter(
     (z) =>
@@ -31,172 +29,339 @@ export default function TrussHeightReview({
       z.members === undefined &&
       z.kind !== "slab-on-grade",
   );
-  if (!level || !rooms.length) return null;
+  const [selected, setSelected] = useState(() =>
+    rooms.filter((z) => !individualHeightNeeded(z)).map((z) => z.id),
+  );
+  const [height, setHeight] = useState(() =>
+    level ? String(+(level.height / 304.8).toFixed(4)) : "",
+  );
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [note, setNote] = useState("");
+  const [preview, setPreview] = useState<{
+    input: BuildingModel;
+    result: ReturnType<typeof previewRoomTrusses>;
+  } | null>(null);
+  const [message, setMessage] = useState("");
+  if (!level) return null;
+  const result = preview?.input === model ? preview.result : null;
+  const change = () => {
+    setPreview(null);
+    setMessage("");
+  };
   const chosen = rooms.filter((z) => selected.includes(z.id));
-  const apply = (generate: boolean) => {
+  const available = rooms.filter((z) => !z.heightUnresolved).length;
+  const sources = level.evidence.filter((e) =>
+    /ceiling|height|plate|section/i.test(e.note),
+  );
+  const run = () => {
     try {
-      const result = reviewRoomHeights(model, {
+      const result = previewRoomTrusses(model, {
         levelId,
         zoneIds: chosen.map((z) => z.id),
-        heightMm: Number(height) * 304.8,
-        basis,
+        suggestedHeightMm: height.trim() ? Number(height) * 304.8 : null,
+        overrides: Object.fromEntries(
+          Object.entries(overrides)
+            .filter(([, v]) => v.trim())
+            .map(([id, v]) => [id, Number(v) * 304.8]),
+        ),
         note,
-        generate,
+        suggestedBasis:
+          Math.abs(Number(height) * 304.8 - level.height) < 1
+            ? "floor-model"
+            : "reviewer-entered",
       });
-      onChange(result.model);
-      setMessage(
-        `${result.heightsApplied} missing heights filled. ${generate ? `${result.generatedRooms} rooms generated; ${result.messages.length} still need geometry review.` : "Review the boundaries, then fit and generate. Existing heights were preserved."} Save revision to keep these changes.`,
-      );
-      setProblems(result.messages);
-      setReviewed(false);
+      setPreview({ input: model, result });
+      setMessage("");
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     }
   };
+  if (!rooms.length)
+    return (
+      <p role="status">
+        {message ||
+          "All rooms on this floor have been added. Save changes to keep your model."}
+      </p>
+    );
   return (
-    <section className="height-review" aria-label="Resolve room heights">
-      <h3>Resolve heights together</h3>
-      <p>
-        {level.label}: {rooms.filter((z) => z.heightUnresolved).length} rooms
-        need heights; {rooms.filter((z) => !z.heightUnresolved).length} have
-        heights and await review.
-      </p>
-      <p className="fineprint">
-        The floor model height is {(level.height / 304.8).toFixed(2)} ft. It may
-        describe wall or plate height rather than the room ceiling. Check
-        sections or ceiling plans before applying it. Select only rooms with
-        this height; review garages, dropped ceilings and different floor datums
-        separately.
-      </p>
-      <div className="actions">
-        <button
-          onClick={() => {
-            setHeight(String(+(level.height / 304.8).toFixed(4)));
-            setBasis("floor-model");
-            setNote(
-              "Floor model height reviewed against room ceiling drawings.",
-            );
-            setReviewed(false);
-          }}
-        >
-          Use floor model height
-        </button>
-        <button
-          onClick={() => {
-            setSelected(
-              rooms.filter((z) => z.heightUnresolved).map((z) => z.id),
-            );
-            setReviewed(false);
-          }}
-        >
-          Select rooms missing heights
-        </button>
-        <button
-          onClick={() => {
-            setSelected([]);
-            setReviewed(false);
-          }}
-        >
-          Clear room selection
-        </button>
+    <section className="height-review" aria-label="Truss setup">
+      <div className="truss-review-heading">
+        <h3>Generate room trusses</h3>
+        <span>{level.label}</span>
       </div>
-      <div className="truss-zone-fields">
+      <p>
+        {available} rooms already have a height. For the others, review the
+        suggested height below. Known heights are kept; room outlines are fitted
+        to nearby modeled walls.
+      </p>
+      <div className="truss-review-height">
+        <div>
+          <strong>1. Check the suggested ceiling height</strong>
+          <p className="fineprint">
+            From this floor’s model: {feetInches(level.height)}. This is a
+            suggestion for rooms without a height, not a room-specific
+            measurement. Garages and other special-height rooms need their own
+            entry.
+          </p>
+        </div>
         <label className="field">
-          Reviewed ceiling height · ft
+          Suggested ceiling height · ft
           <input
             type="number"
+            step="0.01"
             min="0.01"
             max="98.42"
-            step="0.01"
             value={height}
             onChange={(e) => {
               setHeight(e.target.value);
-              setBasis("reviewer-entered");
-              setReviewed(false);
+              change();
             }}
           />
+          <small>
+            {Number(height) > 0
+              ? feetInches(Number(height) * 304.8)
+              : "Enter a height, or preview only rooms with detected heights."}
+          </small>
         </label>
+      </div>
+      <details>
+        <summary>Why are some heights missing? See drawing references</summary>
+        <p>
+          Room outlines come from floor plans. Ceiling heights usually come from
+          sections or ceiling plans. A typical floor height may be readable
+          without a reliable match to each room. “Suggested” means that match
+          still needs your review; “Detected” means the extraction supplied a
+          room height. Model dimensions are approximate until checked.
+        </p>
+        {sources.length ? (
+          sources.map((e, i) => (
+            <p className="fineprint" key={i}>
+              <a
+                href={`/api/plans/${encodeURIComponent(e.planId)}/source#page=${e.page}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {e.sheet} · page {e.page} ↗
+              </a>{" "}
+              — {e.note}
+            </p>
+          ))
+        ) : (
+          <p className="fineprint">
+            No separate ceiling-height citation was saved for this floor. Check
+            the source drawings before using its height.
+          </p>
+        )}
+      </details>
+      <div className="truss-review-heading">
+        <strong>2. Choose rooms</strong>
+        <div className="actions">
+          <button
+            onClick={() => {
+              setSelected(
+                rooms
+                  .filter((z) => !individualHeightNeeded(z))
+                  .map((z) => z.id),
+              );
+              change();
+            }}
+          >
+            Select suggested rooms
+          </button>
+          <button
+            onClick={() => {
+              setSelected([]);
+              change();
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="truss-review-rooms">
+        {rooms.map((z) => {
+          const special = individualHeightNeeded(z),
+            override = overrides[z.id];
+          const mm = z.heightUnresolved
+            ? override?.trim()
+              ? Number(override) * 304.8
+              : special
+                ? null
+                : height.trim()
+                  ? Number(height) * 304.8
+                  : null
+            : z.ceilingHeight;
+          const origin = !z.heightUnresolved
+            ? z.heightReview
+              ? "Entered"
+              : "Detected"
+            : override?.trim()
+              ? "Entered"
+              : mm !== null
+                ? Math.abs(Number(height) * 304.8 - level.height) < 1
+                  ? "Suggested"
+                  : "Entered"
+                : "Needs a height";
+          return (
+            <div className="truss-review-room" key={z.id}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(z.id)}
+                  onChange={(e) => {
+                    setSelected((ids) =>
+                      e.target.checked
+                        ? [...ids, z.id]
+                        : ids.filter((id) => id !== z.id),
+                    );
+                    change();
+                  }}
+                />
+                <strong>{roomName(z.label)}</strong>
+              </label>
+              <span
+                className={`height-origin ${origin === "Detected" ? "detected" : ""}`}
+              >
+                {origin}
+                {mm !== null && Number.isFinite(mm) && mm > 0
+                  ? ` · ${feetInches(mm)}`
+                  : ""}
+              </span>
+              <span className="fineprint">
+                Model size: {feetInches(z.width)} × {feetInches(z.depth)}
+              </span>
+              {z.heightUnresolved && (
+                <details open={special || undefined}>
+                  <summary>
+                    {special
+                      ? "Enter a separate height"
+                      : "Use a different height"}
+                  </summary>
+                  <label className="field">
+                    {roomName(z.label)} ceiling height · ft
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="98.42"
+                      step="0.01"
+                      value={override ?? ""}
+                      placeholder={
+                        special
+                          ? "Required for this room"
+                          : "Use suggested height"
+                      }
+                      onChange={(e) => {
+                        setOverrides((v) => ({ ...v, [z.id]: e.target.value }));
+                        change();
+                      }}
+                    />
+                  </label>
+                </details>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <details>
+        <summary>Add a note (optional)</summary>
         <label className="field">
-          Height source / review note
+          Review note
           <input
-            maxLength={1000}
             value={note}
-            placeholder="e.g. A4.00, typical flat ceiling, 10 ft 6 in"
+            maxLength={1000}
+            placeholder="Drawing reference or explanation"
             onChange={(e) => {
               setNote(e.target.value);
-              setReviewed(false);
+              change();
             }}
           />
         </label>
-      </div>
-      <div className="height-room-list">
-        {rooms.map((z) => (
-          <label key={z.id}>
-            <input
-              type="checkbox"
-              checked={selected.includes(z.id)}
-              onChange={(e) => {
-                setSelected((ids) =>
-                  e.target.checked
-                    ? [...ids, z.id]
-                    : ids.filter((id) => id !== z.id),
-                );
-                setReviewed(false);
-              }}
-            />{" "}
-            {z.label}{" "}
-            <span className="fineprint">
-              {z.heightUnresolved
-                ? "— height required"
-                : `— ${(z.ceilingHeight / 304.8).toFixed(2)} ft (preserved)`}
-            </span>
-          </label>
-        ))}
-      </div>
-      <label>
-        <input
-          type="checkbox"
-          checked={reviewed}
-          onChange={(e) => setReviewed(e.target.checked)}
-        />{" "}
-        I checked the selected rooms’ ceiling heights and boundaries against the
-        drawings.
-      </label>
-      <div className="actions">
-        <button
-          disabled={!chosen.length || !(Number(height) > 0) || !note.trim()}
-          onClick={() => apply(false)}
-        >
-          Apply height to selected rooms
+      </details>
+      <div className="truss-review-primary">
+        <button disabled={!chosen.length} onClick={run}>
+          Preview trusses for {chosen.length}{" "}
+          {chosen.length === 1 ? "room" : "rooms"}
         </button>
-        <button
-          disabled={
-            !reviewed || !chosen.length || !(Number(height) > 0) || !note.trim()
-          }
-          onClick={() => apply(true)}
-        >
-          Fit and generate selected rooms
-        </button>
+        <span className="fineprint">
+          {chosen.length
+            ? "Preview checks heights and wall connections. No changes are saved yet."
+            : "Select at least one room above to continue."}
+        </span>
       </div>
-      <p className="fineprint">
-        Only missing heights are filled. Generation fits nearby modeled wall
-        faces within 12 inches and checks for gaps, collisions and overlaps.
-        Rooms that fail stay unconfirmed; existing heights, confirmed rooms and
-        manual members are preserved. No AI call is needed.
-      </p>
-      {message && <p role="status">{message}</p>}
-      {problems.length > 0 && (
-        <details open>
-          <summary>
-            Rooms still needing geometry review ({problems.length})
-          </summary>
-          {problems.map((p, i) => (
-            <p className="fineprint" key={i}>
-              {p}
+      {result && (
+        <section className="truss-review-result" aria-label="Truss preview">
+          <h4>
+            {result.ready} of {result.rooms.length} rooms ready
+          </h4>
+          <p>
+            {result.memberCount} members · {result.linearFeet.toFixed(2)} LF to
+            add
+          </p>
+          {result.ready > 0 && (
+            <details>
+              <summary>Rooms ready to add — heights and fitted sizes</summary>
+              <ul>
+                {result.rooms
+                  .filter((r) => r.status === "ready")
+                  .map((r) => {
+                    const fitted = result.model.trussZones!.find(
+                      (z) => z.id === r.id,
+                    )!;
+                    return (
+                      <li key={r.id}>
+                        <strong>{r.name}</strong>: {feetInches(r.heightMm!)}{" "}
+                        ceiling ({r.origin}); {feetInches(fitted.width)} ×{" "}
+                        {feetInches(fitted.depth)} fitted room.
+                      </li>
+                    );
+                  })}
+              </ul>
+            </details>
+          )}
+          {result.rooms
+            .filter((r) => r.status !== "ready")
+            .map((r) => (
+              <div className="truss-review-problem" key={r.id}>
+                <strong>{r.name}</strong>
+                <span>
+                  {r.status === "height-needed"
+                    ? "Enter a ceiling height above."
+                    : "The room does not yet fit the modeled walls."}
+                </span>
+                {r.status === "geometry-needed" && (
+                  <button onClick={() => onEdit(r.id)}>Adjust this room</button>
+                )}
+                <details>
+                  <summary>Details</summary>
+                  <p className="fineprint">{r.message}</p>
+                </details>
+              </div>
+            ))}
+          <p className="fineprint">
+            Adding accepts the displayed heights and fitted boundaries for these
+            draft trusses. Suggested heights stay labeled in the saved model.
+            This is not engineering approval.
+          </p>
+          <button
+            disabled={!result.ready}
+            onClick={() => {
+              onChange(result.model);
+              setPreview(null);
+              setMessage(
+                `Added trusses for ${result.ready} ${result.ready === 1 ? "room" : "rooms"}. Save changes to keep them.`,
+              );
+            }}
+          >
+            Add {result.ready} {result.ready === 1 ? "room" : "rooms"} to model
+          </button>
+          {!result.ready && (
+            <p role="status">
+              Nothing added. Resolve the items above, then preview again.
             </p>
-          ))}
-        </details>
+          )}
+        </section>
       )}
+      {message && <p role="status">{message}</p>}
     </section>
   );
 }
