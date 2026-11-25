@@ -216,7 +216,7 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
           output_tokens_details: { reasoning_tokens: 50 },
         },
       });
-      if (isDetail) {
+      {
         assert.equal(request.stream, true);
         const result = JSON.parse(payload);
         const events = [
@@ -237,7 +237,7 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
           },
         ];
         return new Response(
-          (interruptDetail ||
+          ((isDetail && interruptDetail) ||
           (interruptOpenings && request.text.format.name === "shell_openings")
             ? events.slice(0, 1)
             : events
@@ -247,9 +247,6 @@ test("joint workflow checkpoints once, preserves multi-sheet evidence and human 
           { headers: { "content-type": "text/event-stream" } },
         );
       }
-      return new Response(payload, {
-        headers: { "content-type": "application/json" },
-      });
     };
     const job = async (budget = 10) => {
       const id = uid();

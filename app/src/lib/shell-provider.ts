@@ -3,9 +3,12 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { ShellDraft, compileShell } from "./shell";
 import { ExtractionFailure } from "./extraction";
 import { required } from "./config";
-import { aiSettings, tokenCost, SOL_MODEL, SOL_PRICING } from "./ai-config";
+import { tokenCost, SOL_MODEL, SOL_PRICING } from "./ai-config";
 import type { PageEvidence } from "./worker";
 export const SHELL_PROMPT_VERSION = "cross-sheet-shell-v3-opening-basis";
+// Match the detail stages, leaving time for checkpoint persistence within the
+// workflow's 800-second function limit. Bound the whole stream, not just headers.
+export const SHELL_TIMEOUT_MS = 720_000;
 import { MAX_SHELL_PAGES } from "./sheet-selection";
 export { MAX_SHELL_PAGES } from "./sheet-selection";
 export function checkShellPages(pages: PageEvidence[]) {
@@ -99,18 +102,55 @@ export async function extractShell(
   name: string,
 ) {
   checkShellPages(pages);
-  const settings = aiSettings({
-    OPENAI_MODEL: SOL_MODEL,
-    OPENAI_REASONING_EFFORT: "medium",
-  });
   const client = new OpenAI({
     apiKey: required("OPENAI_API_KEY"),
     maxRetries: 0,
-    timeout: settings.timeoutMs,
+    timeout: SHELL_TIMEOUT_MS,
   });
-  const response = await client.responses.create(
-    buildShellRequest(pages, planId, name),
-  );
+  let response: OpenAI.Responses.Response | undefined;
+  let responseId = "";
+  const signal = AbortSignal.timeout(SHELL_TIMEOUT_MS);
+  try {
+    const stream = await client.responses.create(
+      { ...buildShellRequest(pages, planId, name), stream: true },
+      { signal },
+    );
+    for await (const event of stream) {
+      if (event.type === "response.created") responseId = event.response.id;
+      if (
+        event.type === "response.completed" ||
+        event.type === "response.incomplete" ||
+        event.type === "response.failed"
+      ) {
+        response = event.response;
+        break;
+      }
+    }
+  } catch {
+    throw new ExtractionFailure(
+      signal.aborted
+        ? "Shell request reached the 12-minute time limit; usage is unknown."
+        : "Shell stream interrupted; usage is unknown.",
+      {
+        responseId,
+        status: "unknown",
+        reason: signal.aborted ? "request_timeout" : "stream_interrupted",
+        usage: null,
+      },
+    );
+  }
+  if (!response)
+    throw new ExtractionFailure(
+      signal.aborted
+        ? "Shell request reached the 12-minute time limit; usage is unknown."
+        : "Shell stream ended without a final response; usage is unknown.",
+      {
+        responseId,
+        status: "unknown",
+        reason: signal.aborted ? "request_timeout" : "missing_terminal_event",
+        usage: null,
+      },
+    );
 
   const usage = response.usage
     ? {
@@ -132,7 +172,20 @@ export async function extractShell(
     throw new ExtractionFailure("Shell response incomplete.", details);
   let draft;
   try {
-    draft = ShellDraft.parse(JSON.parse(response.output_text));
+    // Raw SSE terminal responses do not have the SDK's output_text convenience
+    // property. Read the completed message content, never partial deltas.
+    draft = ShellDraft.parse(
+      JSON.parse(
+        response.output
+          .filter((item) => item.type === "message")
+          .flatMap((item) =>
+            item.content
+              .filter((c) => c.type === "output_text")
+              .map((c) => c.text),
+          )
+          .join(""),
+      ),
+    );
   } catch {
     throw new ExtractionFailure("Shell response failed schema validation.", {
       ...details,
