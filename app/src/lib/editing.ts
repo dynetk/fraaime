@@ -143,6 +143,7 @@ export function removeElement(input: BuildingModel, id: string) {
     m.components = m.components.filter((c) => c.levelId !== id);
     m.roofs = m.roofs.filter((r) => r.levelId !== id);
     m.levels = m.levels.filter((l) => l.id !== id);
+    m.furniture = m.furniture?.filter((f) => f.levelId !== id);
     m.trussZones = m.trussZones
       ?.filter((z) => z.levelId !== id)
       .map((z) =>

@@ -45,6 +45,10 @@ const Viewer = dynamic(() => import("./ModelViewer"), {
   ssr: false,
   loading: () => <div className="canvas loading">Opening model…</div>,
 });
+const Walkthrough = dynamic(() => import("./Walkthrough"), {
+  ssr: false,
+  loading: () => <div className="canvas loading">Opening walkthrough…</div>,
+});
 async function api<T = any>(
   url: string,
   method = "GET",
@@ -106,7 +110,7 @@ export default function Studio() {
     [framing, setFraming] = useState(true),
     [top, setTop] = useState(false);
   const [tab, setTab] = useState<
-      "model" | "sheets" | "schedule" | "estimate" | "review"
+      "model" | "walkthrough" | "sheets" | "schedule" | "estimate" | "review"
     >("model"),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -238,6 +242,7 @@ export default function Studio() {
   };
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (tab === "walkthrough") return;
       if ((e.target as HTMLElement).closest("input,textarea,select")) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "z") {
         e.preventDefault();
@@ -574,7 +579,9 @@ export default function Studio() {
               </section>
               <div className="tabs">
                 {(
-                  ["model", "sheets", "schedule", "estimate", "review"] as const
+                  [
+                    "model", "walkthrough", "sheets", "schedule", "estimate", "review",
+                  ] as const
                 ).map((t) => (
                   <button
                     key={t}
@@ -583,13 +590,15 @@ export default function Studio() {
                   >
                     {t === "model"
                       ? "3D model"
-                      : t === "sheets"
-                        ? "Source sheets"
-                        : t === "schedule"
-                          ? "Opening schedule"
-                          : t === "estimate"
-                            ? "Estimate"
-                            : `Review (${unresolved.length})`}
+                      : t === "walkthrough"
+                        ? "Walkthrough"
+                        : t === "sheets"
+                          ? "Source sheets"
+                          : t === "schedule"
+                            ? "Opening schedule"
+                            : t === "estimate"
+                              ? "Estimate"
+                              : `Review (${unresolved.length})`}
                   </button>
                 ))}
                 <span>
@@ -606,6 +615,18 @@ export default function Studio() {
                   revision={viewedRevision}
                   dirty={dirty}
                   onSettings={(estimate) => change({ ...model, estimate })}
+                />
+              )}
+              {tab === "walkthrough" && (
+                <Walkthrough
+                  key={projectId + (viewedRevision ?? "draft")}
+                  model={model}
+                  onChange={change}
+                  onExit={() => setTab("model")}
+                  onUndo={undo}
+                  onRedo={redo}
+                  canUndo={!!past.length}
+                  canRedo={!!future.length}
                 />
               )}
               {tab === "model" && (

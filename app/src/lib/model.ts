@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FurnitureSchema } from "./furniture";
 import { EstimateSettingsSchema } from "./estimate-settings";
 const id = z.string().min(1).max(160);
 const coord = z.number().finite().min(-1e7).max(1e7);
@@ -139,6 +140,7 @@ export const TrussZone = z.object({
 });
 // Editor-only metadata is separate from the AI's strictly required output schema.
 export const ModelSchema = ExtractionModelSchema.extend({
+  furniture: z.array(FurnitureSchema).max(200).optional(),
   trussZones: z.array(TrussZone).max(500).optional(),
   framingQuantities: z
     .object({
