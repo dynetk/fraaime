@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { type BuildingModel, length, wallPieces } from "./model";
-import { FURNITURE, type Furniture } from "./furniture";
+import { createTourMaterials } from "./walkthrough-materials";
+import { createTourFurniture } from "./walkthrough-furniture";
 import { floorBounds } from "./walkthrough";
 
 export type TourLighting = "day" | "sunset" | "night";
@@ -10,8 +11,8 @@ const palettes = {
     horizon: "#eaf1ed",
     ground: "#819478",
     sun: "#fff2da",
-    ambient: 1.7,
-    direct: 3.2,
+    ambient: 0.7,
+    direct: 3.6,
     angle: 0.85,
   },
   sunset: {
@@ -19,7 +20,7 @@ const palettes = {
     horizon: "#f7bd97",
     ground: "#696d5d",
     sun: "#ffab62",
-    ambient: 0.85,
+    ambient: 0.4,
     direct: 2.2,
     angle: 0.22,
   },
@@ -28,16 +29,18 @@ const palettes = {
     horizon: "#27364c",
     ground: "#24332d",
     sun: "#adc6f1",
-    ambient: 0.35,
-    direct: 0.35,
+    ambient: 0.12,
+    direct: 0.22,
     angle: 0.7,
   },
 };
 export function disposeScene(root: THREE.Object3D) {
   const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
+  const geometries = new Set<THREE.BufferGeometry>();
   root.traverse((o) => {
     if (o instanceof THREE.Mesh) {
-      o.geometry.dispose();
+      geometries.add(o.geometry);
       (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) =>
         materials.add(m),
       );
@@ -45,7 +48,13 @@ export function disposeScene(root: THREE.Object3D) {
     if (o instanceof THREE.Light && "dispose" in o)
       (o as THREE.DirectionalLight).dispose();
   });
-  materials.forEach((m) => m.dispose());
+  materials.forEach((m) => {
+    for (const value of Object.values(m))
+      if (value instanceof THREE.Texture) textures.add(value);
+    m.dispose();
+  });
+  textures.forEach((t) => t.dispose());
+  geometries.forEach((g) => g.dispose());
   root.clear();
 }
 export function buildWalkthroughScene(
@@ -54,6 +63,7 @@ export function buildWalkthroughScene(
   ceiling: boolean,
 ) {
   const scene = new THREE.Scene();
+  const finishes = createTourMaterials();
   const level = model.levels.find((l) => l.id === levelId)!;
   const bounds = floorBounds(level),
     cx = (bounds.minX + bounds.width / 2) / 1000,
@@ -62,6 +72,8 @@ export function buildWalkthroughScene(
   const extent = Math.max(bounds.width, bounds.depth) / 1000;
   const materials = new Map<string, THREE.MeshStandardMaterial>();
   function mat(color: string) {
+    if (color === "#ded8cb") return finishes.trim;
+    if (color === "#626866") return finishes.darkMetal;
     if (!materials.has(color))
       materials.set(
         color,
@@ -105,12 +117,12 @@ export function buildWalkthroughScene(
   if (level.outline.length >= 3) {
     const geo = new THREE.ShapeGeometry(floorShape());
     geo.rotateX(-Math.PI / 2);
-    const floor = new THREE.Mesh(geo, mat("#c2b29a"));
+    const floor = new THREE.Mesh(geo, finishes.floor);
     floor.position.y = elevation;
     floor.receiveShadow = true;
     scene.add(floor);
     if (ceiling) {
-      const top = new THREE.Mesh(geo.clone(), mat("#f4f1e9"));
+      const top = new THREE.Mesh(geo.clone(), finishes.ceiling);
       top.position.y = elevation + level.height / 1000;
       top.castShadow = true;
       top.receiveShadow = true;
@@ -141,7 +153,7 @@ export function buildWalkthroughScene(
         bevelEnabled: false,
       });
       geo.translate(0, 0, -w.thickness / 2000);
-      const mesh = new THREE.Mesh(geo, mat("#eeeae1"));
+      const mesh = new THREE.Mesh(geo, finishes.wall);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       group.add(mesh);
@@ -214,82 +226,34 @@ export function buildWalkthroughScene(
   }
   const shades: THREE.MeshStandardMaterial[] = [],
     lamps: THREE.PointLight[] = [];
-  function furnishing(f: Furniture) {
-    const def = FURNITURE[f.kind],
-      w = def.width / 1000,
-      d = def.depth / 1000;
-    const g = new THREE.Group();
-    g.position.set(f.center[0] / 1000, elevation, f.center[1] / 1000);
-    g.rotation.y = (-f.rotation * Math.PI) / 180;
-    scene.add(g);
-    const part = (
-      x: number,
-      y: number,
-      z: number,
-      width: number,
-      height: number,
-      depth: number,
-      color = def.color,
-    ) => box(g, x, y, z, width, height, depth, color);
-    if (f.kind === "sofa") {
-      part(0, 0.26, 0, w, 0.36, d);
-      part(0, 0.65, d / 2 - 0.12, w, 0.4, 0.24);
-      for (const sign of [-1, 1]) {
-        part(sign * (w / 2 - 0.1), 0.52, 0, 0.2, 0.32, d);
-        part(sign * 0.46, 0.49, -0.07, 0.87, 0.14, 0.65, "#8fa19d");
-      }
-    } else if (f.kind === "bed") {
-      part(0, 0.22, 0, w, 0.3, d, "#7f6751");
-      part(0, 0.46, -0.03, w - 0.04, 0.22, d - 0.08, "#e2ddd3");
-      part(0, 0.65, d / 2 - 0.07, w, 0.6, 0.14);
-      for (const sign of [-1, 1])
-        part(sign * 0.39, 0.62, 0.68, 0.63, 0.12, 0.42, "#f7f2e5");
-      part(0, 0.585, -0.42, w - 0.02, 0.04, 1.18, "#718184");
-    } else if (f.kind === "table" || f.kind === "chair") {
-      const seat = f.kind === "chair" ? 0.46 : 0.72;
-      part(0, seat, 0, w, 0.06, d);
-      for (const x of [-1, 1])
-        for (const z of [-1, 1])
-          part(
-            x * (w / 2 - 0.07),
-            seat / 2,
-            z * (d / 2 - 0.07),
-            0.065,
-            seat,
-            0.065,
-            "#544a40",
-          );
-      if (f.kind === "chair") part(0, 0.68, d / 2 - 0.035, w, 0.34, 0.07);
-    } else {
-      part(0, 0.025, 0, 0.34, 0.05, 0.34, "#484c49");
-      part(0, 0.7, 0, 0.035, 1.4, 0.035, "#484c49");
-      const shade = new THREE.MeshStandardMaterial({
-        color: "#f2dfb7",
-        emissive: "#ffca7c",
-        emissiveIntensity: 0,
-      });
+  for (const f of (model.furniture ?? []).filter(
+    (f) => f.levelId === levelId,
+  )) {
+    const { group, shade } = createTourFurniture(f, finishes);
+    group.position.set(f.center[0] / 1000, elevation, f.center[1] / 1000);
+    group.rotation.y = (-f.rotation * Math.PI) / 180;
+    scene.add(group);
+    if (shade) {
       shades.push(shade);
-      const mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.15, 0.21, 0.35, 20),
-        shade,
-      );
-      mesh.position.y = 1.425;
-      g.add(mesh);
       if (lamps.length < 4) {
-        const light = new THREE.PointLight("#ffce8c", 0, 7, 2);
+        const light = new THREE.PointLight("#ffd7a5", 0, 9, 2);
         light.position.set(
           f.center[0] / 1000,
-          elevation + 1.5,
+          elevation + 1.43,
           f.center[1] / 1000,
         );
+        // Bound shadow cost; the first two lamps provide local occlusion at night.
+        light.castShadow = lamps.length < 2;
+        light.shadow.mapSize.set(512, 512);
+        light.shadow.normalBias = 0.04;
+        light.shadow.bias = -0.002;
+        light.shadow.camera.near = 0.08;
+        light.shadow.camera.far = 9;
         scene.add(light);
         lamps.push(light);
       }
     }
   }
-  (model.furniture ?? [])
-    .filter((f) => f.levelId === levelId)
-    .forEach(furnishing);
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(
       Math.max(600, extent * 8),
@@ -333,7 +297,7 @@ export function buildWalkthroughScene(
   );
   sky.position.set(cx, elevation, cz);
   scene.add(sky);
-  const hemi = new THREE.HemisphereLight("#dce9ff", "#c0c2c4", 1.7);
+  const hemi = new THREE.HemisphereLight("#dce9ff", "#9c8d76", 0.7);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight("#fff2da", 3);
   sun.castShadow = true;
@@ -347,7 +311,8 @@ export function buildWalkthroughScene(
     far: span * 5 + 80,
   });
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.normalBias = 0.025;
+  sun.shadow.normalBias = 0.012;
+  sun.shadow.radius = 3;
   sun.shadow.bias = -0.0001;
   sun.target.position.set(cx, elevation, cz);
   scene.add(sun, sun.target);
@@ -357,7 +322,7 @@ export function buildWalkthroughScene(
   );
   scene.add(sunDisc);
   // Soft, bounded interior fill keeps night usable even in unfurnished models.
-  const fill = new THREE.HemisphereLight("#ffdfb3", "#b4aa9a", 0);
+  const fill = new THREE.HemisphereLight("#ffe8c8", "#948578", 0);
   scene.add(fill);
   return {
     scene,
@@ -384,9 +349,17 @@ export function buildWalkthroughScene(
         .multiplyScalar(300)
         .add(sun.target.position);
       (sunDisc.material as THREE.MeshBasicMaterial).color.set(p.sun);
-      fill.intensity = interiorLights ? (preset === "night" ? 1.1 : 0.45) : 0;
-      lamps.forEach((l) => (l.intensity = interiorLights ? 12 : 0));
-      shades.forEach((s) => (s.emissiveIntensity = interiorLights ? 0.8 : 0));
+      fill.intensity = interiorLights ? (preset === "night" ? 0.6 : 0.18) : 0;
+      scene.environmentIntensity =
+        preset === "day"
+          ? 0.32
+          : preset === "sunset"
+            ? 0.2
+            : interiorLights
+              ? 0.13
+              : 0.035;
+      lamps.forEach((l) => (l.intensity = interiorLights ? 18 : 0));
+      shades.forEach((s) => (s.emissiveIntensity = interiorLights ? 0.55 : 0));
     },
   };
 }

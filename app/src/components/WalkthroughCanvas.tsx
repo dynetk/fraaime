@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { BuildingModel } from "@/lib/model";
 import {
   buildWalkthroughScene,
@@ -84,9 +85,11 @@ export default function WalkthroughCanvas(props: Props) {
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1;
+    renderer.toneMappingExposure = 1.1;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     const canvas = renderer.domElement;
     canvas.tabIndex = 0;
     canvas.setAttribute(
@@ -107,8 +110,28 @@ export default function WalkthroughCanvas(props: Props) {
       );
       return;
     }
-    world.lighting(latest.current.lighting, latest.current.interiorLights);
-    engine.current = { lighting: world.lighting, camera, renderer };
+    // A compact, locally generated reflection environment gives wood, fabric and
+    // metal a readable response without loading external HDR assets.
+    let environment: THREE.WebGLRenderTarget | undefined;
+    const studio = new RoomEnvironment();
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    try {
+      environment = pmrem.fromScene(studio, 0.04);
+      world.scene.environment = environment.texture;
+    } catch {
+      // Direct lights still render on devices without environment-map support.
+    } finally {
+      studio.dispose();
+      pmrem.dispose();
+    }
+    const applyLighting = (preset: TourLighting, interior: boolean) => {
+      world.lighting(preset, interior);
+      // Geometry and lights are static while walking. Refresh only on a scene
+      // rebuild or lighting change rather than rendering lamp cube maps per frame.
+      renderer.shadowMap.needsUpdate = true;
+    };
+    applyLighting(latest.current.lighting, latest.current.interiorLights);
+    engine.current = { lighting: applyLighting, camera, renderer };
     const resize = () => {
       const width = Math.max(1, el.clientWidth),
         height = Math.max(1, el.clientHeight);
@@ -266,6 +289,8 @@ export default function WalkthroughCanvas(props: Props) {
       window.removeEventListener("blur", clear);
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener("pointerlockchange", lockChanged);
+      world.scene.environment = null;
+      environment?.dispose();
       disposeScene(world.scene);
       renderer.dispose();
       canvas.remove();

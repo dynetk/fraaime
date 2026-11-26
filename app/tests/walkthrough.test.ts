@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as THREE from "three";
 import {
   exampleModel,
   ModelSchema,
@@ -292,4 +293,31 @@ test("tour rendering and all lighting presets preserve source geometry and quant
   }
   assert.equal(JSON.stringify(m), before);
   assert.deepEqual(buildEstimate(m), estimate);
+});
+
+test("tour rebuild releases shared surface textures exactly once", () => {
+  const m = room();
+  m.furniture = (Object.keys(FURNITURE) as Furniture["kind"][]).map(
+    (kind, i) => ({ ...item(kind), id: `finish-${i}` }),
+  );
+  const view = buildWalkthroughScene(m, "floor", true);
+  const textures = new Map<THREE.Texture, number>();
+  view.scene.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    for (const material of Array.isArray(o.material)
+      ? o.material
+      : [o.material]) {
+      for (const value of Object.values(material)) {
+        if (!(value instanceof THREE.Texture) || textures.has(value)) continue;
+        textures.set(value, 0);
+        value.addEventListener("dispose", () =>
+          textures.set(value, textures.get(value)! + 1),
+        );
+      }
+    }
+  });
+  assert.ok(textures.size > 0, "furnished scenes have surface textures");
+  disposeScene(view.scene);
+  for (const count of textures.values()) assert.equal(count, 1);
+  assert.equal(view.scene.children.length, 0);
 });
